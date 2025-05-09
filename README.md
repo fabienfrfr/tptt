@@ -1,6 +1,6 @@
 # LiZA: LineariZe Attention Injection
 
-LiZA is a modular Python library designed to inject efficient linearized attention mechanisms-such as Gated Linear Attention (GLA) and Delta Rule Attention-into existing Transformer models. It leverages the [flash-linear-attention](https://github.com/HazyResearch/flash-attention) library for high-performance implementations, enabling scalable and memory-efficient attention computations.
+LiZA is a modular Python library designed to inject efficient linearized attention mechanisms-such as Gated Linear Attention (GLA) and Delta Rule Attention-into existing Transformer models. It leverages the [flash-linear-attention](https://github.com/fla-org/flash-linear-attention) library for high-performance implementations, enabling scalable and memory-efficient attention computations.
 
 ---
 
@@ -18,7 +18,7 @@ LiZA is a modular Python library designed to inject efficient linearized attenti
 ## Installation
 
 ```bash
-git clone https://github.com/yourusername/liza.git
+git clone https://github.com/fabienfrfr/liza.git
 cd liza
 make install
 ```
