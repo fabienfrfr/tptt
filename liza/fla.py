@@ -1,68 +1,70 @@
 import torch
 import torch.nn as nn
+from fla.ops.gla import fused_chunk_gla, fused_recurrent_gla
+from fla.ops.delta_rule import fused_chunk_delta_rule, fused_recurrent_delta_rule
 
-def check_triton_availability():
-	try:
-		import triton
-		if not torch.cuda.is_available():
-			raise RuntimeError("No GPU detected. Triton requires a GPU.")
-		print("Triton is available.")
-		return True
-	except (ImportError, RuntimeError) as e:
-		import warnings
-		warnings.warn(f"Triton is not available: {e}. Falling back to CPU.")
-		return False
-
-TRITON_AVAILABLE = check_triton_availability()
-
-if TRITON_AVAILABLE:
-    from fla.ops.gla import fused_chunk_gla, fused_recurrent_gla
-    from fla.ops.delta_rule import fused_chunk_delta_rule, fused_recurrent_delta_rule
-
-class FLAOperator:
-    """Unified FLA operator: GLA, delta_rule, GRU, etc."""
+class FLAOperator(nn.Module):
+    """Unified FLA operator: GLA, delta_rule, attention_rnn (Aaren), etc."""
     def __init__(self, mode="gla", head_dim=None):
-        self.mode = mode
+        super().__init__()
+        self.mode = mode.lower()
         self.head_dim = head_dim
-        if mode == "gru" and head_dim is not None:
-            self.gru = nn.GRU(head_dim, head_dim, batch_first=True)
-        else:
-            self.gru = None
 
-    def __call__(self, q, k, v, g=None, scale=1.0, initial_state=None, training=True, **kwargs):
+    def forward(self, q, k, v, g=None, scale=1.0, initial_state=None, training=True, **kwargs):
         if self.mode == "gla":
-            return self._gla(q, k, v, g, scale, initial_state, training, **kwargs)
+            if training or q.shape[-2] > 1:
+                return fused_chunk_gla(q, k, v, g, scale=scale, initial_state=initial_state, output_final_state=True, **kwargs)
+            else:
+                return fused_recurrent_gla(q, k, v, g, scale=scale, initial_state=initial_state, output_final_state=True, **kwargs)
         elif self.mode == "delta_rule":
-            return self._delta_rule(q, k, v, g, scale, initial_state, training, **kwargs)
-        elif self.mode == "gru":
-            return self._gru(q, v, initial_state)
+            if training or q.shape[-2] > 1:
+                return fused_chunk_delta_rule(q, k, v, g, scale=scale, initial_state=initial_state, output_final_state=True, **kwargs)
+            else:
+                return fused_recurrent_delta_rule(q, k, v, g, scale=scale, initial_state=initial_state, output_final_state=True, **kwargs)
+        elif self.mode == "attention_rnn":
+            return self._attention_rnn_scan(q, k, v, scale)
         else:
             raise ValueError(f"Unknown FLA operator: {self.mode}")
 
-    def _gla(self, q, k, v, g, scale, initial_state, training, **kwargs):
-        if training or q.shape[-2] > 1:
-            return fused_chunk_gla(q, k, v, g, scale=scale, initial_state=initial_state, output_final_state=True, **kwargs)
-        else:
-            return fused_recurrent_gla(q, k, v, g, scale=scale, initial_state=initial_state, output_final_state=True, **kwargs)
+    def _attention_rnn_scan(self, q, k, v, scale=1.0):
+        # q, k, v: [B, H, N, D]
+        B, H, N, D = q.shape
+        q = q * scale
 
-    def _delta_rule(self, q, k, v, g, scale, initial_state, training, **kwargs):
-        if training or q.shape[-2] > 1:
-            return fused_chunk_delta_rule(q, k, v, g, scale=scale, initial_state=initial_state, output_final_state=True, **kwargs)
-        else:
-            return fused_recurrent_delta_rule(q, k, v, g, scale=scale, initial_state=initial_state, output_final_state=True, **kwargs)
+        def step(carry, inputs):
+            n_tm1, d_tm1, m_tm1 = carry
+            q_t, k_t, v_t = inputs
+            alpha_t = torch.sum(q_t * k_t, dim=-1, keepdim=True)  # [B, H, 1]
+            m_t = torch.maximum(m_tm1, alpha_t)                   # [B, H, 1]
+            exp_mdiff = torch.exp(m_tm1 - m_t)
+            exp_adiff = torch.exp(alpha_t - m_t)
+            d_t = exp_mdiff * d_tm1 + exp_adiff                   # [B, H, 1]
+            n_t = exp_mdiff * n_tm1 + exp_adiff * v_t             # [B, H, D]
+            y_t = n_t / d_t                                       # [B, H, D]
+            return (n_t, d_t, m_t), y_t
 
-    def _gru(self, q, v, initial_state):
-        b, h, n, d = q.shape
-        x = v.permute(0,2,1,3).reshape(b, n, h*d)
-        h0 = initial_state
-        out, hn = self.gru(x, h0)
-        out = out.reshape(b, n, h, d).permute(0,2,1,3)
-        return out, hn
+        n0 = torch.zeros(B, H, D, dtype=q.dtype, device=q.device)
+        d0 = torch.zeros(B, H, 1, dtype=q.dtype, device=q.device)
+        m0 = torch.full((B, H, 1), float('-inf'), dtype=q.dtype, device=q.device)
+
+        # Prepare inputs: [N, (q_t, k_t, v_t)]
+        q_seq = q.transpose(2, 0)  # [N, B, H, D]
+        k_seq = k.transpose(2, 0)
+        v_seq = v.transpose(2, 0)
+        inputs = (q_seq, k_seq, v_seq)
+
+        # torch.scan expects fn(carry, x), x: (q_t, k_t, v_t)
+        _, y = torch.scan(
+            fn=step,
+            inputs=inputs,
+            initial=(n0, d0, m0),
+            length=q_seq.shape[0]
+        )
+        y = y.transpose(0, 2).transpose(0, 1)  # [B, H, N, D]
+        return y, None
 
 def get_fla_operator(name, head_dim=None):
     if isinstance(name, str):
-        if name in ["gla", "delta_rule"] and not TRITON_AVAILABLE:
-            raise RuntimeError(f"Triton is required for the {name} operator.")
         return FLAOperator(mode=name, head_dim=head_dim)
     elif callable(name):
         return name

@@ -26,9 +26,9 @@ def test_parallel_fla_attention_delta_rule(dummy_base_attention, dummy_input):
     assert out.shape == dummy_input.shape
     assert attn is None
 
-def test_parallel_fla_attention_gru(dummy_base_attention, dummy_input):
+def test_parallel_fla_attention_rnn(dummy_base_attention, dummy_input):
     config = dummy_base_attention.config
-    module = ParallelFLAAttention(dummy_base_attention, config, operator="gru")
+    module = ParallelFLAAttention(dummy_base_attention, config, operator="attention_rnn")
     out, attn = module(dummy_input)
     assert out.shape == dummy_input.shape
     assert attn is None
@@ -53,10 +53,10 @@ def test_delta_rule_operator_shape():
     out, _ = operator(q, k, v, g, scale=1.0, training=True)
     assert out.shape == (b, h, n, d)
 
-def test_gru_operator_shape():
+def test_rnn_operator_shape():
     b, h, n, d = 2, 4, 10, 4
     q = torch.randn(b, h, n, d)
     v = torch.randn(b, h, n, d)
-    operator = get_fla_operator("gru", head_dim=d)
+    operator = get_fla_operator("attention_rnn", head_dim=d)
     out, _ = operator(q, None, v, None, scale=1.0, training=True)
     assert out.shape == (b, h, n, d)
