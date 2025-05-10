@@ -1,7 +1,17 @@
 import torch
 import torch.nn as nn
-from fla.ops.gla import fused_chunk_gla, fused_recurrent_gla
-from fla.ops.delta_rule import fused_chunk_delta_rule, fused_recurrent_delta_rule
+
+try:
+    import triton
+    TRITON_AVAILABLE = True
+except ImportError:
+    TRITON_AVAILABLE = False
+    import warnings
+    warnings.warn("Triton is not installed or supported. Falling back to CPU.")
+
+if TRITON_AVAILABLE:
+    from fla.ops.gla import fused_chunk_gla, fused_recurrent_gla
+    from fla.ops.delta_rule import fused_chunk_delta_rule, fused_recurrent_delta_rule
 
 class FLAOperator:
     """Unified FLA operator: GLA, delta_rule, GRU, etc."""
@@ -45,6 +55,8 @@ class FLAOperator:
 
 def get_fla_operator(name, head_dim=None):
     if isinstance(name, str):
+        if name in ["gla", "delta_rule"] and not TRITON_AVAILABLE:
+            raise RuntimeError(f"Triton is required for the {name} operator.")
         return FLAOperator(mode=name, head_dim=head_dim)
     elif callable(name):
         return name

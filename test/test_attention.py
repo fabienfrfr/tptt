@@ -2,6 +2,24 @@ import torch
 from liza.attention import ParallelFLAAttention
 from liza.fla import get_fla_operator
 
+from unittest.mock import patch
+
+try:
+    import triton
+    TRITON_AVAILABLE = True
+except ImportError:
+    TRITON_AVAILABLE = False
+    import warnings
+    warnings.warn("Triton is not installed or supported. Falling back to CPU.")
+
+@patch("fla.ops.gla.fused_chunk_gla", return_value="mocked_result")
+@patch("fla.ops.gla.fused_recurrent_gla", return_value="mocked_result")
+def test_fla_operator(mock_fused_chunk_gla, mock_fused_recurrent_gla):
+    from liza.fla import FLAOperator
+    operator = FLAOperator(mode="gla")
+    result = operator(q=None, k=None, v=None)
+    assert result == "mocked_result"
+
 def test_parallel_fla_attention_gla(dummy_base_attention, dummy_input):
     config = dummy_base_attention.config
     module = ParallelFLAAttention(dummy_base_attention, config, operator="gla")

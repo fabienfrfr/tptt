@@ -1,10 +1,11 @@
 .PHONY: install test clean
 
 install:
-	pip install -r requirements.txt
+    pip install -r requirements.txt
 
 test:
-	pytest
+    @export $(shell cat .env | xargs) && pytest
 
 clean:
-	rm -rf build dist *.egg-info .pytest_cache
+    rm -rf build dist *.egg-info .pytest_cache
+    find . -type d -name "__pycache__" -exec rm -rf {} +
