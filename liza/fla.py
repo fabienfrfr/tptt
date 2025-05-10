@@ -4,7 +4,7 @@ from fla.ops.gla import fused_chunk_gla, fused_recurrent_gla
 from fla.ops.delta_rule import fused_chunk_delta_rule, fused_recurrent_delta_rule
 
 class FLAOperator:
-    """Base class for FLA operators."""
+    """Unified FLA operator: GLA, delta_rule, GRU, etc."""
     def __init__(self, mode="gla", head_dim=None):
         self.mode = mode
         self.head_dim = head_dim
@@ -36,7 +36,6 @@ class FLAOperator:
             return fused_recurrent_delta_rule(q, k, v, g, scale=scale, initial_state=initial_state, output_final_state=True, **kwargs)
 
     def _gru(self, q, v, initial_state):
-        # Merge heads for GRU, then split back
         b, h, n, d = q.shape
         x = v.permute(0,2,1,3).reshape(b, n, h*d)
         h0 = initial_state
