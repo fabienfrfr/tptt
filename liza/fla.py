@@ -1,13 +1,19 @@
 import torch
 import torch.nn as nn
 
-try:
-    import triton
-    TRITON_AVAILABLE = True
-except ImportError:
-    TRITON_AVAILABLE = False
-    import warnings
-    warnings.warn("Triton is not installed or supported. Falling back to CPU.")
+def check_triton_availability():
+	try:
+		import triton
+		if not torch.cuda.is_available():
+			raise RuntimeError("No GPU detected. Triton requires a GPU.")
+		print("Triton is available.")
+		return True
+	except (ImportError, RuntimeError) as e:
+		import warnings
+		warnings.warn(f"Triton is not available: {e}. Falling back to CPU.")
+		return False
+
+TRITON_AVAILABLE = check_triton_availability()
 
 if TRITON_AVAILABLE:
     from fla.ops.gla import fused_chunk_gla, fused_recurrent_gla

@@ -12,7 +12,7 @@ class ParallelFLAAttention(nn.Module):
         self,
         base_attn: nn.Module,
         config: AttentionConfig,
-        operator: Union[str, Callable] = "gla",
+        operator: Union[str, Callable] = "gru",
         combine_fn: Optional[Callable] = None,
         operator_kwargs: Optional[Dict] = None,
         fla_weight: float = 0.01,
