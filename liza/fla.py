@@ -21,62 +21,63 @@ if TRITON_AVAILABLE:
 
 def gla_scan(q, k, v, g=None, scale=1.0):
     # q, k, v: [B, H, N, D]
-    # g: [B, H, N, D] or None
+    # g: [B, H, N, 1] ou [B, H, N, D] selon formulation
     B, H, N, D = q.shape
     q = q * scale
     if g is None:
-        g = torch.zeros_like(q)
+        g = torch.zeros(B, H, N, 1, dtype=q.dtype, device=q.device)
+    lambda_t = torch.sigmoid(g)  # [B, H, N, 1]
 
     def step(carry, inputs):
-        s_tm1 = carry  # [B, H, D]
-        q_t, k_t, v_t, g_t = inputs
-        s_t = s_tm1 + torch.sigmoid(q_t * k_t + g_t) * v_t
-        y_t = s_t
-        return s_t, y_t
+        S_tm1 = carry  # [B, H, D, D]
+        q_t, k_t, v_t, lambda_t_ = inputs  # [B, H, D], [B, H, D], [B, H, D], [B, H, 1]
+        kvT = torch.einsum('bhd,bhe->bhde', k_t, v_t)  # [B, H, D, D]
+        S_t = lambda_t_ * S_tm1 + (1 - lambda_t_) * kvT
+        o_t = torch.einsum('bhd,bhde->bhe', q_t, S_t)  # [B, H, D]
+        return S_t, o_t
 
-    s0 = torch.zeros(B, H, D, dtype=q.dtype, device=q.device)
-    q_seq = q.transpose(2, 0)
+    S0 = torch.zeros(B, H, D, D, dtype=q.dtype, device=q.device)
+    q_seq = q.transpose(2, 0)      # [N, B, H, D]
     k_seq = k.transpose(2, 0)
     v_seq = v.transpose(2, 0)
-    g_seq = g.transpose(2, 0)
-    inputs = (q_seq, k_seq, v_seq, g_seq)
-    _, y = torch.scan(
+    lambda_seq = lambda_t.transpose(2, 0)  # [N, B, H, 1]
+    inputs = (q_seq, k_seq, v_seq, lambda_seq)
+    _, o = torch.scan(
         fn=step,
         inputs=inputs,
-        initial=s0,
+        initial=S0,
         length=q_seq.shape[0]
     )
-    y = y.transpose(0, 2).transpose(0, 1)
-    return y, None
+    o = o.transpose(0, 2).transpose(0, 1)  # [B, H, N, D]
+    return o, None
 
 def delta_rule_scan(q, k, v, g=None, scale=1.0):
+    # q, k, v: [B, H, N, D]
+    # g: [B, H, N, D] ou [B, H, N, 1]
     B, H, N, D = q.shape
-    q = q * scale
     if g is None:
-        g = torch.zeros_like(q)
+        g = torch.zeros(B, H, N, D, dtype=q.dtype, device=q.device)
+    eta_t = torch.sigmoid(g)  # [B, H, N, D]
 
     def step(carry, inputs):
-        s_tm1 = carry
-        q_t, k_t, v_t, g_t = inputs
-        delta = torch.sigmoid(q_t * k_t + g_t) * (v_t - s_tm1)
-        s_t = s_tm1 + delta
-        y_t = s_t
-        return s_t, y_t
+        h_tm1 = carry  # [B, H, D]
+        v_t, eta_t_ = inputs  # [B, H, D], [B, H, D]
+        h_t = h_tm1 + eta_t_ * (v_t - h_tm1)
+        return h_t, h_t
 
-    s0 = torch.zeros(B, H, D, dtype=q.dtype, device=q.device)
-    q_seq = q.transpose(2, 0)
-    k_seq = k.transpose(2, 0)
-    v_seq = v.transpose(2, 0)
-    g_seq = g.transpose(2, 0)
-    inputs = (q_seq, k_seq, v_seq, g_seq)
-    _, y = torch.scan(
+    h0 = torch.zeros(B, H, D, dtype=q.dtype, device=q.device)
+    v_seq = v.transpose(2, 0)      # [N, B, H, D]
+    eta_seq = eta_t.transpose(2, 0)
+    inputs = (v_seq, eta_seq)
+    _, h = torch.scan(
         fn=step,
         inputs=inputs,
-        initial=s0,
-        length=q_seq.shape[0]
+        initial=h0,
+        length=v_seq.shape[0]
     )
-    y = y.transpose(0, 2).transpose(0, 1)
-    return y, None
+    h = h.transpose(0, 2).transpose(0, 1)  # [B, H, N, D]
+    return h, None
+
 
 def attention_rnn_scan(q, k, v, scale=1.0):
     # q, k, v: [B, H, N, D]
