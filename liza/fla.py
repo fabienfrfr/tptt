@@ -1,7 +1,23 @@
 import torch
 import torch.nn as nn
-from fla.ops.gla import fused_chunk_gla, fused_recurrent_gla
-from fla.ops.delta_rule import fused_chunk_delta_rule, fused_recurrent_delta_rule
+
+def check_triton_availability():
+	try:
+		import triton
+		if not torch.cuda.is_available():
+			raise RuntimeError("No GPU detected. Triton requires a GPU.")
+		print("Triton is available.")
+		return True
+	except (ImportError, RuntimeError) as e:
+		import warnings
+		warnings.warn(f"Triton is not available: {e}. Falling back to CPU.")
+		return False
+
+TRITON_AVAILABLE = check_triton_availability()
+
+if TRITON_AVAILABLE:
+    from fla.ops.gla import fused_chunk_gla, fused_recurrent_gla
+    from fla.ops.delta_rule import fused_chunk_delta_rule, fused_recurrent_delta_rule
 
 class FLAOperator(nn.Module):
     """Unified FLA operator: GLA, delta_rule, attention_rnn (Aaren), etc."""
@@ -21,7 +37,7 @@ class FLAOperator(nn.Module):
                 return fused_chunk_delta_rule(q, k, v, g, scale=scale, initial_state=initial_state, output_final_state=True, **kwargs)
             else:
                 return fused_recurrent_delta_rule(q, k, v, g, scale=scale, initial_state=initial_state, output_final_state=True, **kwargs)
-        elif self.mode == "attention_rnn":
+        elif self.mode in ["attention_rnn", "aaren"]:
             return self._attention_rnn_scan(q, k, v, scale)
         else:
             raise ValueError(f"Unknown FLA operator: {self.mode}")
