@@ -31,6 +31,6 @@ jobs:
 
     - name: Run tests
       env:
-        # EXAMPLE_VAR: "value"
+        PYTHONPATH: ${{ github.workspace }}
       run: |
         pytest
