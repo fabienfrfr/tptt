@@ -3,3 +3,4 @@ __pycache__/
 *.pyo
 .env
 .vscode/
+.ipynb_checkpoints/
