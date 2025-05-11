@@ -1,6 +1,6 @@
 from typing import List, Union, Callable, Optional, Dict
 import torch.nn as nn
-from .attention import ParallelFLAAttention
+from .mpa import ParallelFLAAttention
 from .config import AttentionConfig
 
 class CustomInjectConfig:

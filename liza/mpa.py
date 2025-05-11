@@ -7,6 +7,7 @@ from .config import AttentionConfig
 from .utils import repeat_kv
 from .fla import get_fla_operator
 
+# Memory Parallel Attention (MPA)
 class ParallelFLAAttention(nn.Module):
     def __init__(
         self,

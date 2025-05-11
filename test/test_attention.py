@@ -1,47 +1,57 @@
 import torch
-from liza.attention import ParallelFLAAttention
-from liza.fla import get_fla_operator
+import pytest
+from liza.mpa import ParallelFLAAttention
 
-from unittest.mock import patch
+@pytest.mark.parametrize("operator", ["delta_rule", "gla"])
+@pytest.mark.parametrize("use_mask", [True, False])
+def test_parallel_fla_attention_forward(operator, use_mask, base_attn, config):
+    B, N = 2, 5
+    hidden_states = torch.randn(B, N, config.hidden_size)
+    attention_mask = torch.ones(B, N, 1) if use_mask else None
 
-@patch("fla.ops.gla.fused_chunk_gla", return_value="mocked_result")
-@patch("fla.ops.gla.fused_recurrent_gla", return_value="mocked_result")
-def test_fla_operator(mock_fused_chunk_gla, mock_fused_recurrent_gla):
-    from liza.fla import FLAOperator
-    operator = FLAOperator(mode="gla")
-    result = operator(q=None, k=None, v=None)
-    assert result == "mocked_result"
+    fla = ParallelFLAAttention(
+        base_attn=base_attn,
+        config=config,
+        operator=operator,
+        fla_weight=0.5,
+    )
 
-def test_parallel_fla_attention_gla(dummy_base_attention, dummy_input):
-    config = dummy_base_attention.config
-    module = ParallelFLAAttention(dummy_base_attention, config, operator="gla")
-    out, attn = module(dummy_input)
-    assert out.shape == dummy_input.shape
-    assert attn is None
+    out, attn_weights = fla(hidden_states, attention_mask=attention_mask)
+    assert out.shape == (B, N, config.hidden_size)
+    assert attn_weights.shape[0] == B
 
-def test_parallel_fla_attention_delta_rule(dummy_base_attention, dummy_input):
-    config = dummy_base_attention.config
-    module = ParallelFLAAttention(dummy_base_attention, config, operator="delta_rule")
-    out, attn = module(dummy_input)
-    assert out.shape == dummy_input.shape
-    assert attn is None
+def test_parallel_fla_attention_cache(base_attn, config):
+    B, N = 2, 5
+    hidden_states = torch.randn(B, N, config.hidden_size)
+    attention_mask = torch.ones(B, N, 1)
+    layer_idx = 0
 
-def test_gla_operator_shape():
-    b, h, n, d = 2, 4, 10, 4
-    q = torch.randn(b, h, n, d)
-    k = torch.randn(b, h, n, d)
-    v = torch.randn(b, h, n, d)
-    g = torch.zeros_like(q)
-    operator = get_fla_operator("gla", head_dim=d)
-    out, _ = operator(q, k, v, g, scale=1.0, training=True)
-    assert out.shape == (b, h, n, d)
+    fla = ParallelFLAAttention(
+        base_attn=base_attn,
+        config=config,
+        operator="delta_rule",
+        fla_weight=0.5,
+        layer_idx=layer_idx,
+    )
 
-def test_delta_rule_operator_shape():
-    b, h, n, d = 2, 4, 10, 4
-    q = torch.randn(b, h, n, d)
-    k = torch.randn(b, h, n, d)
-    v = torch.randn(b, h, n, d)
-    g = torch.zeros_like(q)
-    operator = get_fla_operator("delta_rule", head_dim=d)
-    out, _ = operator(q, k, v, g, scale=1.0, training=True)
-    assert out.shape == (b, h, n, d)
+    past_key_value = {layer_idx: torch.zeros(B, config.num_attention_heads, config.head_dim)}
+    out, attn_weights = fla(hidden_states, attention_mask=attention_mask, past_key_value=past_key_value)
+    assert out.shape == (B, N, config.hidden_size)
+    assert isinstance(attn_weights, torch.Tensor)
+
+def test_parallel_fla_attention_backward(base_attn, config):
+    B, N = 2, 5
+    hidden_states = torch.randn(B, N, config.hidden_size, requires_grad=True)
+    attention_mask = torch.ones(B, N, 1)
+
+    fla = ParallelFLAAttention(
+        base_attn=base_attn,
+        config=config,
+        operator="delta_rule",
+        fla_weight=0.5,
+    )
+    out, _ = fla(hidden_states, attention_mask=attention_mask)
+    loss = out.sum()
+    loss.backward()
+    assert hidden_states.grad is not None
+    assert hidden_states.grad.shape == hidden_states.shape
