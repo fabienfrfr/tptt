@@ -6,7 +6,7 @@ LiZA is a modular Python library designed to inject efficient linearized attenti
 
 ## Features
 
-- **Flexible Attention Injection**: Seamlessly wrap and augment standard Transformer attention layers with linearized attention variants.
+- **Flexible Attention Injection**: Seamlessly wrap and augment standard Transformer attention layers with linearized attention variants for latent memory.
 - **Support for GLA and Delta Rule**: Includes implementations of Gated Linear Attention and Delta Rule Attention using flash-linear-attention.
 - **Modular Design**: Easily extend or customize operators and integration strategies.
 - **Typed Configuration**: Uses Pydantic for strict and clear configuration management.
