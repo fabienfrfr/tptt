@@ -9,10 +9,6 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
-
-    container:
-      image: python:3.12-slim 
-
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
