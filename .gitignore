@@ -2,5 +2,4 @@ __pycache__/
 *.pyc
 *.pyo
 .env
-.vscode/
 .ipynb_checkpoints/
