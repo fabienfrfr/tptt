@@ -82,7 +82,6 @@ make test
 - einops
 - pydantic
 - flash-linear-attention
-- pytest (for testing)
 
 See `requirements.txt` for the full list.
 

@@ -1,7 +1,10 @@
-.PHONY: install test clean
+.PHONY: install test clean lint
 
 install:
 	pip install -r requirements.txt
+
+lint:
+	python -m pylint liza/ tests/
 
 test:
 	@export $(shell cat .env | xargs) && pytest

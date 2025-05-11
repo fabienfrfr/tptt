@@ -3,3 +3,4 @@ flash-linear-attention
 einops
 pydantic
 pytest
+pylint
