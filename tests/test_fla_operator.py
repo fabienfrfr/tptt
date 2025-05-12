@@ -1,5 +1,7 @@
 import torch
-from liza.fla import get_fla_operator, gla_recurrent, delta_rule_closed_form
+
+from liza.fla import delta_rule_closed_form, get_fla_operator, gla_recurrent
+
 
 def test_gla_recurrent_shapes():
     B, H, N, D = 2, 3, 8, 4

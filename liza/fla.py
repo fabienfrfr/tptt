@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+
 def check_triton_availability():
     try:
         import triton
@@ -16,8 +17,9 @@ def check_triton_availability():
 TRITON_AVAILABLE = check_triton_availability()
 
 if TRITON_AVAILABLE:
+    from fla.ops.delta_rule import (fused_chunk_delta_rule,
+                                    fused_recurrent_delta_rule)
     from fla.ops.gla import fused_chunk_gla, fused_recurrent_gla
-    from fla.ops.delta_rule import fused_chunk_delta_rule, fused_recurrent_delta_rule
 
 def gla_recurrent(q, k, v, g=None, scale=1.0, initial_state=None):
     """

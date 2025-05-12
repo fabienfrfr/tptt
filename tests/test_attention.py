@@ -1,6 +1,8 @@
-import torch
 import pytest
+import torch
+
 from liza.mpa import ParallelFLAAttention
+
 
 @pytest.mark.parametrize("operator", ["delta_rule", "gla"])
 @pytest.mark.parametrize("use_mask", [True, False])

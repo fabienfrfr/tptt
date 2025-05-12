@@ -1,5 +1,7 @@
 import torch.nn as nn
+
 from liza.injection import CustomInjectConfig, get_custom_injected_model
+
 
 def test_get_custom_injected_model(base_attn):
     model = nn.Sequential(base_attn)

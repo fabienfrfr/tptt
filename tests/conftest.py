@@ -4,6 +4,7 @@ import torch.nn as nn
 
 from liza.config import AttentionConfig
 
+
 @pytest.fixture
 def config():
     class DummyConfig:

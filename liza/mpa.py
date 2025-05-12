@@ -1,11 +1,14 @@
-from typing import Optional, Callable, Dict, Union
+from typing import Callable, Dict, Optional, Union
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
+
 from .config import AttentionConfig
-from .utils import repeat_kv
 from .fla import get_fla_operator
+from .utils import repeat_kv
+
 
 # Memory Parallel Attention (MPA)
 class ParallelFLAAttention(nn.Module):

@@ -1,5 +1,7 @@
 from typing import Optional
+
 from pydantic import BaseModel
+
 
 class AttentionConfig(BaseModel):
     num_attention_heads: int

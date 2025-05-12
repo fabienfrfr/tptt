@@ -1,8 +1,8 @@
 from .config import AttentionConfig
-from .mpa import ParallelFLAAttention
-from .injection import CustomInjectConfig, get_custom_injected_model
-from .utils import repeat_kv
 from .fla import FLAOperator, get_fla_operator
+from .injection import CustomInjectConfig, get_custom_injected_model
+from .mpa import ParallelFLAAttention
+from .utils import repeat_kv
 
 __all__ = [
     "AttentionConfig",

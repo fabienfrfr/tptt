@@ -1,7 +1,10 @@
-from typing import List, Union, Callable, Optional, Dict
+from typing import Callable, Dict, List, Optional, Union
+
 import torch.nn as nn
-from .mpa import ParallelFLAAttention
+
 from .config import AttentionConfig
+from .mpa import ParallelFLAAttention
+
 
 class CustomInjectConfig:
     def __init__(
