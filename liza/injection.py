@@ -22,17 +22,29 @@ class CustomInjectConfig:
         self.fla_weight = fla_weight
 
     def custom_layer_factory(self, base_attn: nn.Module):
-        config = AttentionConfig.parse_obj(base_attn.config.__dict__)
+        fields = {
+            k: getattr(base_attn.config, k)
+            for k in [
+                "hidden_size",
+                "num_attention_heads",
+                "num_key_value_heads",
+                "head_dim",
+            ]
+        }
+        config = AttentionConfig.model_validate(fields)
         return ParallelFLAAttention(
             base_attn,
             config,
             operator=self.operator,
             combine_fn=self.combine_fn,
             operator_kwargs=self.operator_kwargs,
-            fla_weight=self.fla_weight
+            fla_weight=self.fla_weight,
         )
 
-def get_custom_injected_model(model: nn.Module, config: CustomInjectConfig) -> nn.Module:
+
+def get_custom_injected_model(
+    model: nn.Module, config: CustomInjectConfig
+) -> nn.Module:
     for name, module in model.named_modules():
         if name in config.target_modules:
             parent = model

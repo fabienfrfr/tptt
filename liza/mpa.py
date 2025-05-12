@@ -36,8 +36,9 @@ class ParallelFLAAttention(nn.Module):
         self.v_proj = base_attn.v_proj
         self.o_proj = base_attn.o_proj
 
-        self.rotary_emb = getattr(base_attn, 'rotary_emb', None)
-        self.pool_g = nn.AdaptiveAvgPool1d(output_size=self.head_dim * self.num_key_value_heads)
+        self.rotary_emb = getattr(base_attn, "rotary_emb", None)
+        # self.pool_g = nn.AdaptiveAvgPool1d(output_size=self.head_dim * self.num_key_value_heads)
+        self.g_proj = nn.Linear(self.head_dim, 1)
         self.operator = get_fla_operator(operator, head_dim=self.head_dim)
         self.combine_fn = combine_fn or (lambda orig, fla: orig + fla)
         self.operator_kwargs = operator_kwargs or {}
@@ -47,22 +48,35 @@ class ParallelFLAAttention(nn.Module):
         q = self.q_proj(hidden_states)
         k = self.k_proj(hidden_states)
         v = self.v_proj(hidden_states)
-        g = self.pool_g(k)
 
         if attention_mask is not None:
-            v = v.mul_(attention_mask.squeeze())
+            if attention_mask.dim() == 2:
+                attention_mask = attention_mask.unsqueeze(-1)
+            v = v * attention_mask
 
-        q = rearrange(q, 'b n (h d) -> b h n d', h=self.num_heads)
-        k = rearrange(k, 'b n (h d) -> b h n d', h=self.num_key_value_heads)
-        v = rearrange(v, 'b n (h d) -> b h n d', h=self.num_key_value_heads)
-        g = rearrange(g, 'b n (h d) -> b h n d', h=self.num_key_value_heads)
+        # Reshape q, k, v: [B, N, hidden_size] -> [B, N, H, D]
+        q = rearrange(q, "b n (h d) -> b n h d", h=self.num_heads)
+        k = rearrange(k, "b n (h d) -> b n h d", h=self.num_key_value_heads)
+        v = rearrange(v, "b n (h d) -> b n h d", h=self.num_key_value_heads)
 
+        # Gate projection
+        g = self.g_proj(k)  # [B, N, H, D] -> [B, N, H, 1]
+        g = g.expand(-1, -1, -1, self.head_dim)  # [B, N, H, D]
+
+        # Rearrange to [B, H, N, D]
+        q = q.permute(0, 2, 1, 3)
+        k = k.permute(0, 2, 1, 3)
+        v = v.permute(0, 2, 1, 3)
+        g = g.permute(0, 2, 1, 3)
+
+        # repeat_kv si besoin
         k = repeat_kv(k, self.num_key_value_groups)
         v = repeat_kv(v, self.num_key_value_groups)
         g = repeat_kv(g, self.num_key_value_groups)
         return q, k, v, g
 
-    def _preprocess_for_fla(self, q, k, v, g):
+    def _preprocess_for_pla(self, q, k, v, g):
+        """Preprocess the inputs for the parallel linear attention operator."""
         q = F.softmax(q, dim=-1)
         k = F.softmax(k, dim=-1)
         g = F.logsigmoid(g) / 16
@@ -81,21 +95,36 @@ class ParallelFLAAttention(nn.Module):
     ):
         # --- Cache ---
         last_state = None
-        if past_key_value is not None and self.layer_idx is not None and len(past_key_value) > self.layer_idx:
+        if (
+            past_key_value is not None
+            and self.layer_idx is not None
+            and len(past_key_value) > self.layer_idx
+        ):
             last_state = past_key_value[self.layer_idx]
 
         # --- Projections & reshape ---
         q, k, v, g = self._project_and_prepare(hidden_states, attention_mask)
-        q, k, v, g = self._preprocess_for_fla(q, k, v, g)
-        scale = 1.0 / (self.head_dim ** 0.5)
+        q, k, v, g = self._preprocess_for_pla(q, k, v, g)
+        scale = 1.0 / (self.head_dim**0.5)
 
         # --- FLA operator ---
         fla_out, new_recurrent_state = self.operator(
-            q, k, v, g, scale=scale, initial_state=last_state, training=self.training, **self.operator_kwargs
+            q,
+            k,
+            v,
+            g,
+            scale=scale,
+            initial_state=last_state,
+            training=self.training,
+            **self.operator_kwargs
         )
 
         if past_key_value is not None and self.layer_idx is not None:
-            past_key_value.update(recurrent_state=new_recurrent_state, layer_idx=self.layer_idx, offset=q.shape[1])
+            past_key_value.update(
+                recurrent_state=new_recurrent_state,
+                layer_idx=self.layer_idx,
+                offset=q.shape[1],
+            )
 
         # --- Rotary embeddings (optionnel) ---
         if self.rotary_emb is not None and position_ids is not None:
@@ -103,7 +132,7 @@ class ParallelFLAAttention(nn.Module):
             # Optionally: apply rotary to q/k
 
         # --- Combine ---
-        fla_out = rearrange(fla_out, 'b h n d -> b n (h d)')
+        fla_out = rearrange(fla_out, "b h n d -> b n (h d)")
         fla_out = fla_out.to(hidden_states.dtype)
         base_out, attn_weights = self.base_attn(
             hidden_states,

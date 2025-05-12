@@ -22,9 +22,11 @@ def test_parallel_fla_attention_forward(operator, use_mask, base_attn, config):
     assert out.shape == (B, N, config.hidden_size)
     assert attn_weights.shape[0] == B
 
+
 def test_parallel_fla_attention_cache(base_attn, config):
     B, N = 2, 5
-    hidden_states = torch.randn(B, N, config.hidden_size)
+    hidden_size = config.hidden_size
+    hidden_states = torch.randn(B, N, hidden_size)
     attention_mask = torch.ones(B, N, 1)
     layer_idx = 0
 
@@ -36,10 +38,15 @@ def test_parallel_fla_attention_cache(base_attn, config):
         layer_idx=layer_idx,
     )
 
-    past_key_value = {layer_idx: torch.zeros(B, config.num_attention_heads, config.head_dim)}
-    out, attn_weights = fla(hidden_states, attention_mask=attention_mask, past_key_value=past_key_value)
-    assert out.shape == (B, N, config.hidden_size)
+    past_key_value = {
+        layer_idx: torch.zeros(B, config.num_attention_heads, config.head_dim)
+    }
+    out, attn_weights = fla(
+        hidden_states, attention_mask=attention_mask, past_key_value=past_key_value
+    )
+    assert out.shape == (B, N, hidden_size)
     assert isinstance(attn_weights, torch.Tensor)
+
 
 def test_parallel_fla_attention_backward(base_attn, config):
     B, N = 2, 5
@@ -57,3 +64,16 @@ def test_parallel_fla_attention_backward(base_attn, config):
     loss.backward()
     assert hidden_states.grad is not None
     assert hidden_states.grad.shape == hidden_states.shape
+
+
+def test_parallel_fla_attention_with_rotary(base_attn, config):
+    class DummyRotary:
+        def __call__(self, v, pos):
+            return torch.ones_like(v), torch.ones_like(v)
+
+    base_attn.rotary_emb = DummyRotary()
+    fla = ParallelFLAAttention(base_attn, config)
+    hidden_states = torch.randn(2, 5, config.hidden_size)
+    pos = torch.arange(5).unsqueeze(0).repeat(2, 1)
+    out, attn = fla(hidden_states, position_ids=pos)
+    assert out.shape == (2, 5, config.hidden_size)

@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 import torch
 import torch.nn as nn
@@ -7,12 +9,13 @@ from liza.config import AttentionConfig
 
 @pytest.fixture
 def config():
-    class DummyConfig:
-        hidden_size = 16
-        num_attention_heads = 4
-        num_key_value_heads = 2
-        head_dim = 4
-    return DummyConfig()
+    return SimpleNamespace(
+        hidden_size=32,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=8,
+    )
+
 
 @pytest.fixture
 def base_attn(config):
