@@ -30,27 +30,40 @@ make install
 ## Usage Example
 
 ```python
-from transformers import AutoModelForCausalLM
-from liza import CustomInjectConfig, get_custom_injected_model
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from liza.injector import inject_linear_attention
 
-# Load your pretrained model (example)
-model = AutoModelForCausalLM.from_pretrained("gpt2")
+# Charger votre modèle (ex: Llama, Mistral, etc.)
+model_name = "TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
+model = AutoModelForCausalLM.from_pretrained(model_name).to("cuda:0")
+tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-# Define injection configuration
+# Injecter l’attention linéaire dans les modules voulus
 target_modules = []
 for name, module in model.named_modules():
-    # Vérifiez que le nom du module se termine par 'self_attn'
     if name.endswith('self_attn'):
         target_modules.append(name)
-
-config = CustomInjectConfig(
-    target_modules=target_modules, #["transformer.h.0.attn"],  # Example module name(s)
-    operator="gla",                          # or "delta_rule"
-    fla_weight=0.1                          # Weight for linearized attention output
+        
+model_ = inject_linear_attention(
+    model,
+    model.config,
+    target_modules=target_modules, #["model.layers.0.self_attn", "model.layers.1.self_attn"],
+    operator_mode="delta_rule",
+    fla_weight=0.5,
+    chunk_size=64,
 )
 
-# Inject linearized attention
-model = get_custom_injected_model(model, config)
+prompt = "Once upon a time,"
+inputs = tokenizer(prompt, return_tensors="pt").to("cuda:0")
+
+with torch.no_grad():
+    output = model_.generate(
+        **inputs,
+        max_new_tokens=50,
+        do_sample=False  # déterministe
+    )
+
+print(tokenizer.decode(output[0], skip_special_tokens=True))
 ```
 
 

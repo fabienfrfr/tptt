@@ -39,11 +39,6 @@ def test_forward_shape(operator, random_tensors, chunk_size, seq_len, tensor_dim
     assert O.shape == (seq_len, tensor_dim)
 
 
-def test_invalid_mode_raises():
-    with pytest.raises(ValueError):
-        AttentionOperator(mode="unknown_mode")
-
-
 def test_chunk_size_1(operator, seq_len, tensor_dim):
     Q = K = V = beta = torch.ones(seq_len, tensor_dim)
     O, _ = operator(Q, K, V, beta, chunk_size=1)

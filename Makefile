@@ -8,7 +8,7 @@ lint:
 	python -m pylint liza/ tests/
 
 test:
-	@export $(shell cat .env | xargs) && pytest
+	@export $(shell cat .env | xargs) && pytest --tb=short -v
 
 coverage:
 	pytest --cov=liza --cov-report=term-missing
