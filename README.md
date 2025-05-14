@@ -1,6 +1,9 @@
 # LiZA: LineariZe Attention Injection
 
-LiZA is a modular Python library designed to inject efficient linearized attention mechanisms-such as Gated Linear Attention (GLA) and Delta Rule Attention-into existing Transformer models. It leverages the [flash-linear-attention](https://github.com/fla-org/flash-linear-attention) library for high-performance implementations, enabling scalable and memory-efficient attention computations.
+LiZA is a modular Python library designed to inject efficient linearized attention mechanisms-such as `Memory as Gate` (describes in [Titans](https://arxiv.org/html/2501.00663v1)) in pretrained transformers. 
+
+It leverages the [flash-linear-attention](https://github.com/fla-org/flash-linear-attention) library for high-performance implementations, enabling scalable and memory-efficient attention computations.
+
 
 ---
 
@@ -64,6 +67,70 @@ with torch.no_grad():
     )
 
 print(tokenizer.decode(output[0], skip_special_tokens=True))
+
+```
+
+```python
+
+from transformers import TrainingArguments, Trainer
+from peft import LoraConfig, get_peft_model
+from datasets import load_dataset
+
+from liza.injector import AdjustMaGWeightCallback
+
+peft_config = LoraConfig(
+    r=8,
+    lora_alpha=16,
+    lora_dropout=0.05,
+    bias="none",
+    task_type="CAUSAL_LM",
+    target_modules=["q_proj", "v_proj"]
+)
+model = get_peft_model(model_, peft_config)
+#model.print_trainable_parameters()
+
+training_args = TrainingArguments(
+    per_device_train_batch_size=2,
+    num_train_epochs=1,
+    learning_rate=2e-4,
+    fp16=True,
+    logging_steps=10,
+    save_strategy="epoch",
+    report_to="tensorboard",
+)
+
+dataset = load_dataset("yahma/alpaca-cleaned")["train"].select(range(1000))
+
+def format_instruction(sample):
+    return {
+        "text": f"### Instruction:\n{sample['instruction']}\n\n### Input:\n{sample['input']}\n\n### Response:\n{sample['output']}"
+    }
+dataset = dataset.map(format_instruction)
+
+def tokenize(sample):
+    tokens = tokenizer(
+        sample["text"],
+        truncation=True,
+        max_length=256,
+        padding="max_length"
+    )
+    tokens["labels"] = tokens["input_ids"].copy()
+    return tokens
+
+tokenized_dataset = dataset.map(tokenize)
+
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=tokenized_dataset,
+    processing_class=tokenizer,
+    callbacks=[AdjustMaGWeightCallback(model, initial_weight=0.01, final_weight=0.5, transition_step=500)]
+)
+
+trainer.train()
+
+model.save_pretrained("./liza_llama-instruct_model")
+tokenizer.save_pretrained("./iza_llama-instruct_model")
 ```
 
 

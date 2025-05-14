@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 
+if torch.cuda.is_available():
+    from fla.ops.gla import fused_chunk_gla, fused_recurrent_gla
+
 
 class AttentionOperator(nn.Module):
     """Base class for linear attention operators."""
@@ -9,12 +12,34 @@ class AttentionOperator(nn.Module):
         super().__init__()
         self.mode = mode
         self.head_dim = head_dim
+        self.training = False
 
-    def forward(self, q, k, v, beta=None, chunk_size=64, initial_state=None, **kwargs):
+    def forward(
+        self, q, k, v, beta=None, chunk_size=64, scale=1, recurrent_state=None, **kwargs
+    ):
         if self.mode == "delta_rule":
             return self.chunk_delta_rule_forward(q, k, v, beta, chunk_size)
         elif self.mode == "gla":
-            raise NotImplementedError("GLA not implemented yet.")
+            if self.training or q.shape[-2] > 1:
+                return fused_chunk_gla(
+                    q,
+                    k,
+                    v,
+                    beta,
+                    scale=scale,
+                    initial_state=recurrent_state,
+                    output_final_state=True,
+                )
+            else:
+                return fused_recurrent_gla(
+                    q,
+                    k,
+                    v,
+                    beta,
+                    scale=scale,
+                    initial_state=recurrent_state,
+                    output_final_state=True,
+                )
         else:
             raise ValueError(f"Unknown operator mode: {self.mode}")
 
@@ -23,6 +48,7 @@ class AttentionOperator(nn.Module):
         L, d = Q.shape
         n_chunks = L // C
 
+        # On reshape tout en [n_chunks, C, d] (beta aussi !)
         Q = Q.reshape(n_chunks, C, d)
         K = K.reshape(n_chunks, C, d)
         V = V.reshape(n_chunks, C, d)

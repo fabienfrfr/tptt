@@ -2,7 +2,7 @@ import pytest
 import torch.nn as nn
 
 from liza.injector import inject_linear_attention
-from liza.linear_attention import LinearAttention
+from liza.linear_attention import LiZAttention
 
 
 class DummySelfAttn(nn.Module):
@@ -35,7 +35,7 @@ class DummyConfig:
 def test_inject_linear_attention_replaces_module():
     model = DummyModel()
     injected = inject_linear_attention(
-        model, DummyConfig(), target_modules=["self_attn"], fla_weight=0.7
+        model, DummyConfig(), target_modules=["self_attn"], mag_weight=0.7
     )
-    assert isinstance(injected.self_attn, LinearAttention)
-    assert injected.self_attn.fla_weight == 0.7
+    assert isinstance(injected.self_attn, LiZAttention)
+    assert injected.self_attn.mag_weight == 0.7

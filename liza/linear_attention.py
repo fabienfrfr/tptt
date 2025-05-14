@@ -8,13 +8,13 @@ from einops import rearrange
 from .attention_operator import get_attention_operator
 
 
-class LinearAttention(nn.Module):
+class LiZAttention(nn.Module):
     def __init__(
         self,
         base_attn: nn.Module,
         config,  # PretrainedConfig
         operator_mode: str = "delta_rule",
-        fla_weight: float = 0.5,
+        mag_weight: float = 0.5,
         chunk_size: int = 64,
         use_rotary: bool = False,
     ):
@@ -29,7 +29,7 @@ class LinearAttention(nn.Module):
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
 
         self.embed_dim = config.hidden_size
-        self.fla_weight = fla_weight
+        self.mag_weight = mag_weight  # Memory as Gate Weight
         self.chunk_size = chunk_size
 
         # Projections partagées
@@ -50,6 +50,7 @@ class LinearAttention(nn.Module):
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
+        past_key_value: Optional[torch.Tensor] = None,
         **kwargs
     ):
 
@@ -98,7 +99,7 @@ class LinearAttention(nn.Module):
         valid_chunk_size = get_valid_chunk_size(total_L, self.chunk_size)
 
         # Attention linéaire
-        o_lin, _ = self.operator(
+        o_lin, recur = self.operator(
             q_lin, k_lin, v_lin, beta=g_lin, chunk_size=valid_chunk_size
         )
         o_lin = o_lin.reshape(B, H, N, D_h)
@@ -110,5 +111,5 @@ class LinearAttention(nn.Module):
             hidden_states, attention_mask=attention_mask, **kwargs
         )
 
-        out = self.fla_weight * o_lin + (1 - self.fla_weight) * o_base
+        out = self.mag_weight * o_lin + (1 - self.mag_weight) * o_base
         return out, attn_weights

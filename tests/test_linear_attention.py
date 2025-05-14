@@ -2,7 +2,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from liza.linear_attention import LinearAttention
+from liza.linear_attention import LiZAttention
 
 
 @pytest.fixture
@@ -35,6 +35,6 @@ def dummy_config():
 
 
 def test_projection_sharing(dummy_base_attn, dummy_config):
-    lin_attn = LinearAttention(dummy_base_attn, dummy_config)
+    lin_attn = LiZAttention(dummy_base_attn, dummy_config)
     assert lin_attn.q_proj is dummy_base_attn.q_proj
     assert lin_attn.o_proj is dummy_base_attn.o_proj
