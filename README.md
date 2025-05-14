@@ -184,11 +184,3 @@ If you use LiZA in your academic work, please cite:
 ## Contact
 
 For questions or support, please open an issue on the [GitHub repository](https://github.com/fabienfrfr/LiZA) or contact the maintainer.
-
----
-
-This README provides a concise overview, installation instructions, usage examples, and development notes to help users get started quickly with LiZA.
-
----
-
-Let me know if you want me to generate a `CHANGELOG.md` or an examples folder as well!
