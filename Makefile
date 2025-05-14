@@ -21,8 +21,10 @@ clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} +
 
 build:
+	poetry export --without-hashes --format=requirements.txt --output=requirements.txt
 	poetry build
 
 publish:
+	poetry export --without-hashes --format=requirements.txt --output=requirements.txt
 	poetry build
 	poetry publish --username __token__ --password $(PYPI_TOKEN)
