@@ -1,25 +1,36 @@
+"""Attention operator module for linear and GLA attention in PyTorch."""
+
 import torch
-import torch.nn as nn
+from torch import nn
 
 if torch.cuda.is_available():
     from fla.ops.gla import fused_chunk_gla, fused_recurrent_gla
+else:
+    fused_chunk_gla = None  # pylint: disable=invalid-name
+    fused_recurrent_gla = None  # pylint: disable=invalid-name
 
 
 class AttentionOperator(nn.Module):
     """Base class for linear attention operators."""
 
-    def __init__(self, mode="delta_rule", head_dim=None):
+    def __init__(self, mode="delta_rule", head_dim=None, training=False):
         super().__init__()
         self.mode = mode
         self.head_dim = head_dim
-        self.training = False
+        self.training = training
 
-    def forward(
-        self, q, k, v, beta=None, chunk_size=64, scale=1, recurrent_state=None, **kwargs
-    ):
+    def forward(self, q, k, v, **options):
+        """Forward pass for the attention operator."""
+        beta = options.get("beta", None)
+        chunk_size = options.get("chunk_size", 64)
+        scale = options.get("scale", 1)
+        recurrent_state = options.get("recurrent_state", None)
+
         if self.mode == "delta_rule":
             return self.chunk_delta_rule_forward(q, k, v, beta, chunk_size)
-        elif self.mode == "gla":
+        if self.mode == "gla":
+            if fused_chunk_gla is None or fused_recurrent_gla is None:
+                raise RuntimeError("GLA kernels are not available: CUDA required.")
             if self.training or q.shape[-2] > 1:
                 return fused_chunk_gla(
                     q,
@@ -30,57 +41,56 @@ class AttentionOperator(nn.Module):
                     initial_state=recurrent_state,
                     output_final_state=True,
                 )
-            else:
-                return fused_recurrent_gla(
-                    q,
-                    k,
-                    v,
-                    beta,
-                    scale=scale,
-                    initial_state=recurrent_state,
-                    output_final_state=True,
-                )
-        else:
-            raise ValueError(f"Unknown operator mode: {self.mode}")
+            return fused_recurrent_gla(
+                q,
+                k,
+                v,
+                beta,
+                scale=scale,
+                initial_state=recurrent_state,
+                output_final_state=True,
+            )
+        raise ValueError(f"Unknown operator mode: {self.mode}")
 
     @staticmethod
-    def chunk_delta_rule_forward(Q, K, V, beta, C):
-        L, d = Q.shape
-        n_chunks = L // C
+    def chunk_delta_rule_forward(query, key, value, beta, chunk_size):
+        """Chunkwise delta rule attention computation."""
+        seq_len, head_dim = query.shape
+        num_chunks = seq_len // chunk_size
 
-        # On reshape tout en [n_chunks, C, d] (beta aussi !)
-        Q = Q.reshape(n_chunks, C, d)
-        K = K.reshape(n_chunks, C, d)
-        V = V.reshape(n_chunks, C, d)
-        beta = beta.reshape(n_chunks, C, d)
+        query = query.reshape(num_chunks, chunk_size, head_dim)
+        key = key.reshape(num_chunks, chunk_size, head_dim)
+        value = value.reshape(num_chunks, chunk_size, head_dim)
+        beta = beta.reshape(num_chunks, chunk_size, head_dim)
 
-        K_beta = K * beta  # [n_chunks, C, d]
-        V_beta = V * beta  # [n_chunks, C, d]
+        key_beta = key * beta
+        value_beta = value * beta
 
-        O = torch.empty_like(V)
-        S = torch.zeros(d, d, device=Q.device, dtype=Q.dtype)
-        for i in range(n_chunks):
-            q_i = Q[i]  # [C, d]
-            k_i = K[i]  # [C, d]
-            v_i = V[i]  # [C, d]
-            k_beta_i = K_beta[i]  # [C, d]
-            v_beta_i = V_beta[i]  # [C, d]
+        output = torch.empty_like(value)
+        state = torch.zeros(head_dim, head_dim, device=query.device, dtype=query.dtype)
 
-            # Eq. 10: Compute T (lower-triangular)
-            T = -(k_beta_i @ k_i.t()).tril(-1)  # [C, C]
-            T = T + torch.eye(C, device=Q.device, dtype=Q.dtype)
-            # Eq. 11: W, U
-            W = T @ k_beta_i  # [C, d]
-            U = T @ v_beta_i  # [C, d]
-            # Eq. 8-9: chunkwise parallel
-            u_i = U - W @ S  # [C, d]
-            o_inter = q_i @ S  # [C, d]
-            A_i = (q_i @ k_i.t()).tril()  # [C, C]
-            o_intra = A_i @ u_i  # [C, d]
-            S = S + k_i.t() @ u_i  # [d, d]
-            O[i] = o_intra + o_inter
-        return O.reshape(L, d), None
+        def process_chunk(query_i, key_i, key_beta_i, value_beta_i, state):
+            t_matrix = -(key_beta_i @ key_i.t()).tril(-1)
+            t_matrix = t_matrix + torch.eye(
+                chunk_size, device=query.device, dtype=query.dtype
+            )
+            w_matrix = t_matrix @ key_beta_i
+            u_matrix = t_matrix @ value_beta_i
+            u_i = u_matrix - w_matrix @ state
+            o_inter = query_i @ state
+            a_i = (query_i @ key_i.t()).tril()
+            o_intra = a_i @ u_i
+            state = state + key_i.t() @ u_i
+            return o_intra + o_inter, state
+
+        for i in range(num_chunks):
+            chunk_out, state = process_chunk(
+                query[i], key[i], key_beta[i], value_beta[i], state
+            )
+            output[i] = chunk_out
+        return output.reshape(seq_len, head_dim), None
 
 
 def get_attention_operator(mode, head_dim=None):
+    """Factory for AttentionOperator."""
     return AttentionOperator(mode=mode, head_dim=head_dim)

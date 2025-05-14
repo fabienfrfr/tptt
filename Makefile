@@ -1,4 +1,4 @@
-.PHONY: install test clean lint coverage coverage-html
+.PHONY: install test clean lint coverage coverage-html build publish
 
 install:
 	pip install -r requirements.txt
@@ -19,3 +19,10 @@ coverage-html:
 clean:
 	rm -rf build dist *.egg-info .pytest_cache
 	find . -type d -name "__pycache__" -exec rm -rf {} +
+
+build:
+	poetry build
+
+publish:
+	poetry build
+	poetry publish --username __token__ --password $(PYPI_TOKEN)

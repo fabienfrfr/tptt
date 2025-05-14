@@ -1,23 +1,37 @@
+"""Linear Attention module for LiZA."""
+
 from typing import Optional
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
+from torch import nn
 
 from .attention_operator import get_attention_operator
+from .utils import get_valid_chunk_size, repeat_kv
 
 
-class LiZAttention(nn.Module):
-    def __init__(
+class LiZAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
+    """LiZA Linear Attention module, mixing linear and vanilla attention."""
+
+    def __init__(  # pylint: disable=too-many-arguments, too-many-positional-arguments
         self,
         base_attn: nn.Module,
         config,  # PretrainedConfig
         operator_mode: str = "delta_rule",
         mag_weight: float = 0.5,
-        chunk_size: int = 64,
+        max_chunk_size: int = 64,
         use_rotary: bool = False,
     ):
+        """
+        Args:
+            base_attn (nn.Module): Standard attention module.
+            config: Model configuration.
+            operator_mode (str): Mode for attention operator.
+            mag_weight (float): Weight for mixing linear and vanilla attention.
+            chunk_size (int): Chunk size for linear attention.
+            use_rotary (bool): Whether to use rotary embeddings.
+        """
         super().__init__()
         self.base_attn = base_attn
 
@@ -30,9 +44,9 @@ class LiZAttention(nn.Module):
 
         self.embed_dim = config.hidden_size
         self.mag_weight = mag_weight  # Memory as Gate Weight
-        self.chunk_size = chunk_size
+        self.max_chunk_size = max_chunk_size
 
-        # Projections partagées
+        # Shared projections
         self.q_proj = base_attn.q_proj
         self.k_proj = base_attn.k_proj
         self.v_proj = base_attn.v_proj
@@ -45,15 +59,21 @@ class LiZAttention(nn.Module):
         )
         self.operator = get_attention_operator(operator_mode, self.head_dim)
 
-    def forward(
+    def forward(  # pylint: disable=too-many-locals
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[torch.Tensor] = None,
-        **kwargs
+        **kwargs,
     ):
-
+        """
+        Forward pass for LiZA Linear Attention.
+        Args:
+            hidden_states (torch.Tensor): Input tensor.
+            attention_mask (Optional[torch.Tensor]): Attention mask.
+            **kwargs: Additional arguments for base attention.
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: Output and attention weights.
+        """
         q = self.q_proj(hidden_states)
         k = self.k_proj(hidden_states)
         v = self.v_proj(hidden_states)
@@ -62,13 +82,13 @@ class LiZAttention(nn.Module):
         if attention_mask is not None:
             v = v.mul_(attention_mask[:, -v.shape[-2] :, None])
 
-        # Reshape pour multi-head
+        # Reshape for multi-head
         q = rearrange(q, "b n (h d) -> b h n d", h=self.num_heads)
         k = rearrange(k, "b n (h d) -> b h n d", h=self.num_key_value_heads)
         v = rearrange(v, "b n (h d) -> b h n d", h=self.num_key_value_heads)
         g = rearrange(g, "b n (h m) -> b h n m", h=self.num_key_value_heads)
 
-        # Répétition pour GQA
+        # Repeat for GQA
         k = repeat_kv(k, self.num_key_value_groups)
         v = repeat_kv(v, self.num_key_value_groups)
         g = repeat_kv(g, self.num_key_value_groups)
@@ -77,7 +97,7 @@ class LiZAttention(nn.Module):
         k = F.softmax(k, dim=-1)
 
         gate_logit_normalizer = 16
-        g = F.logsigmoid(g) / gate_logit_normalizer
+        g = torch.logsigmoid(g) / gate_logit_normalizer
 
         q, k, v, g = (x.to(torch.float32).contiguous() for x in (q, k, v, g))
 
@@ -86,27 +106,27 @@ class LiZAttention(nn.Module):
                 "[LinearAttention] Applying rotary embedding (not implemented in this snippet)"
             )
 
-        B, H, N, D_h = q.shape
+        batch_size, num_heads, seq_len, head_dim = q.shape
 
-        # On a besoin de [L, d] pour l'opérateur, L = B * H * N, d = D_h
-        q_lin = q.reshape(B * H * N, D_h)
-        k_lin = k.reshape(B * H * N, D_h)
-        v_lin = v.reshape(B * H * N, D_h)
-        g_lin = g.reshape(B * H * N, D_h)
+        # Flatten for operator: [batch_size * num_heads * seq_len, head_dim]
+        q_lin = q.reshape(batch_size * num_heads * seq_len, head_dim)
+        k_lin = k.reshape(batch_size * num_heads * seq_len, head_dim)
+        v_lin = v.reshape(batch_size * num_heads * seq_len, head_dim)
+        g_lin = g.reshape(batch_size * num_heads * seq_len, head_dim)
 
-        # Vérification chunk_size
-        total_L = B * H * N
-        valid_chunk_size = get_valid_chunk_size(total_L, self.chunk_size)
+        # Validate chunk size
+        total_length = batch_size * num_heads * seq_len
+        valid_chunk_size = get_valid_chunk_size(total_length, self.max_chunk_size)
 
-        # Attention linéaire
-        o_lin, recur = self.operator(
+        # Linear attention
+        o_lin, _ = self.operator(
             q_lin, k_lin, v_lin, beta=g_lin, chunk_size=valid_chunk_size
         )
-        o_lin = o_lin.reshape(B, H, N, D_h)
+        o_lin = o_lin.reshape(batch_size, num_heads, seq_len, head_dim)
         o_lin = rearrange(o_lin, "b h n d -> b n (h d)")
         o_lin = self.o_proj(o_lin)
 
-        # Attention standard
+        # Standard attention
         o_base, attn_weights = self.base_attn(
             hidden_states, attention_mask=attention_mask, **kwargs
         )

@@ -1,13 +1,20 @@
+# pylint: disable=redefined-outer-name
+"""Tests for LiZAttention projection sharing."""
+
 import pytest
 import torch
-import torch.nn as nn
+from torch import nn
 
 from liza.linear_attention import LiZAttention
 
 
 @pytest.fixture
 def dummy_base_attn():
+    """Fixture for a dummy base attention module."""
+
     class DummyAttention(nn.Module):
+        """Minimal dummy attention module with shared projections."""
+
         def __init__(self):
             super().__init__()
             self.q_proj = nn.Linear(64, 64)
@@ -15,8 +22,8 @@ def dummy_base_attn():
             self.v_proj = nn.Linear(64, 64)
             self.o_proj = nn.Linear(64, 64)
 
-        def forward(self, x, **kwargs):
-            # Simule la sortie d'un module d'attention standard
+        def forward(self, x, **kwargs):  # pylint: disable=unused-argument
+            """Simulate output of a standard attention module."""
             return torch.randn(x.shape[0], x.shape[1], 64), None
 
     return DummyAttention()
@@ -24,7 +31,11 @@ def dummy_base_attn():
 
 @pytest.fixture
 def dummy_config():
-    class DummyConfig:
+    """Fixture for a dummy configuration object."""
+
+    class DummyConfig:  # pylint: disable=too-few-public-methods
+        """Minimal dummy config for LiZAttention."""
+
         hidden_size = 64
         num_attention_heads = 8
         num_key_value_heads = 4
@@ -35,6 +46,7 @@ def dummy_config():
 
 
 def test_projection_sharing(dummy_base_attn, dummy_config):
+    """Test that LiZAttention shares projections with the base attention module."""
     lin_attn = LiZAttention(dummy_base_attn, dummy_config)
     assert lin_attn.q_proj is dummy_base_attn.q_proj
     assert lin_attn.o_proj is dummy_base_attn.o_proj

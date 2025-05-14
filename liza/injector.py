@@ -1,19 +1,22 @@
-import torch.nn as nn
+"""Utilities to inject LiZA linear attention and manage mag_weight scheduling."""
+
+from torch import nn
 from transformers import TrainerCallback
 from transformers.configuration_utils import PretrainedConfig
 
 from .linear_attention import LiZAttention
 
 
-def inject_linear_attention(
+def inject_linear_attention(  # pylint: disable=too-many-arguments, too-many-positional-arguments
     model: nn.Module,
     config: PretrainedConfig,  # ou LlamaConfig, LigerGLAConfig, etc.
     target_modules: list,
     operator_mode: str = "delta_rule",
     mag_weight: float = 0.5,
-    chunk_size: int = 64,  # max
+    max_chunk_size: int = 64,
 ):
-    for name, module in model.named_modules():
+    """Replace target modules in a model with LiZAttention."""
+    for name, _ in model.named_modules():
         if name in target_modules:
             parent = model
             *path, last = name.split(".")
@@ -27,13 +30,15 @@ def inject_linear_attention(
                     config=config,
                     operator_mode=operator_mode,
                     mag_weight=mag_weight,
-                    chunk_size=chunk_size,
+                    max_chunk_size=max_chunk_size,
                 ),
             )
     return model
 
 
 class AdjustMaGWeightCallback(TrainerCallback):
+    """TrainerCallback to schedule mag_weight during training."""
+
     def __init__(
         self, model, initial_weight=0.01, final_weight=0.5, transition_step=500
     ):
@@ -50,6 +55,6 @@ class AdjustMaGWeightCallback(TrainerCallback):
             weight = self.initial_weight + (self.final_weight - self.initial_weight) * (
                 current_step / self.transition_step
             )
-            for name, module in self.model.named_modules():
+            for _, module in self.model.named_modules():
                 if isinstance(module, LiZAttention):
                     module.mag_weight = weight
