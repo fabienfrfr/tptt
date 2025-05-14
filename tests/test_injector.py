@@ -1,7 +1,7 @@
 """Unit test for inject_linear_attention replacing a module with LiZAttention."""
 
-from torch import nn
 import torch
+from torch import nn
 
 from liza.injector import inject_linear_attention
 from liza.linear_attention import LiZAttention

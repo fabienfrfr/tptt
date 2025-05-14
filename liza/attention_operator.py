@@ -55,13 +55,23 @@ class AttentionOperator(nn.Module):
     @staticmethod
     def chunk_delta_rule_forward(query, key, value, beta, chunk_size):
         """Chunkwise delta rule attention computation."""
-        seq_len, head_dim = query.shape
+
+        batch_size, num_heads, seq_len, head_dim = query.shape
+
+        # Flatten for operator: [batch_size * num_heads * seq_len, head_dim]
+        q_lin = query.reshape(batch_size * num_heads * seq_len, head_dim)
+        k_lin = key.reshape(batch_size * num_heads * seq_len, head_dim)
+        v_lin = value.reshape(batch_size * num_heads * seq_len, head_dim)
+        g_lin = beta.reshape(batch_size * num_heads * seq_len, head_dim)
+
+        seq_len, head_dim = q_lin.shape
         num_chunks = seq_len // chunk_size
 
-        query = query.reshape(num_chunks, chunk_size, head_dim)
-        key = key.reshape(num_chunks, chunk_size, head_dim)
-        value = value.reshape(num_chunks, chunk_size, head_dim)
-        beta = beta.reshape(num_chunks, chunk_size, head_dim)
+        # Reshaping for chunk
+        query = q_lin.reshape(num_chunks, chunk_size, head_dim)
+        key = k_lin.reshape(num_chunks, chunk_size, head_dim)
+        value = v_lin.reshape(num_chunks, chunk_size, head_dim)
+        beta = g_lin.reshape(num_chunks, chunk_size, head_dim)
 
         key_beta = key * beta
         value_beta = value * beta

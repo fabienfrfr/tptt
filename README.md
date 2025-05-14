@@ -8,11 +8,9 @@ It leverages the [flash-linear-attention](https://github.com/fla-org/flash-linea
 ## Features
 
 - **Flexible Attention Injection**: Seamlessly wrap and augment standard Transformer attention layers with linearized attention variants for latent memory.
-- **Support for GLA and Delta Rule**: Includes implementations of Gated Linear Attention and Delta Rule Attention using flash-linear-attention.
+- **Support for GLA and Delta Rule**: Includes implementations of Gated Linear Attention and Delta Rule Attention.
 - **Modular Design**: Easily extend or customize operators and integration strategies.
-- **Typed Configuration**: Uses Pydantic for strict and clear configuration management.
 - **Compatibility**: Designed to integrate with Hugging Face Transformers and similar PyTorch models.
-- **Testing**: Comprehensive Pytest test suite with fixtures ensures reliability.
 
 ---
 
@@ -64,7 +62,7 @@ with torch.no_grad():
         do_sample=False  # deterministic
     )
 
-print(tokenizer.decode(output[^2_0], skip_special_tokens=True))
+print(tokenizer.decode(output[0], skip_special_tokens=True))
 ```
 
 

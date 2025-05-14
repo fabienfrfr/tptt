@@ -97,7 +97,7 @@ class LiZAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
         k = F.softmax(k, dim=-1)
 
         gate_logit_normalizer = 16
-        g = torch.logsigmoid(g) / gate_logit_normalizer
+        g = F.logsigmoid(g) / gate_logit_normalizer
 
         q, k, v, g = (x.to(torch.float32).contiguous() for x in (q, k, v, g))
 
@@ -106,22 +106,13 @@ class LiZAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
                 "[LinearAttention] Applying rotary embedding (not implemented in this snippet)"
             )
 
-        batch_size, num_heads, seq_len, head_dim = q.shape
-
-        # Flatten for operator: [batch_size * num_heads * seq_len, head_dim]
-        q_lin = q.reshape(batch_size * num_heads * seq_len, head_dim)
-        k_lin = k.reshape(batch_size * num_heads * seq_len, head_dim)
-        v_lin = v.reshape(batch_size * num_heads * seq_len, head_dim)
-        g_lin = g.reshape(batch_size * num_heads * seq_len, head_dim)
-
         # Validate chunk size
+        batch_size, num_heads, seq_len, head_dim = q.shape
         total_length = batch_size * num_heads * seq_len
         valid_chunk_size = get_valid_chunk_size(total_length, self.max_chunk_size)
 
         # Linear attention
-        o_lin, _ = self.operator(
-            q_lin, k_lin, v_lin, beta=g_lin, chunk_size=valid_chunk_size
-        )
+        o_lin, _ = self.operator(q, k, v, beta=g, chunk_size=valid_chunk_size)
         o_lin = o_lin.reshape(batch_size, num_heads, seq_len, head_dim)
         o_lin = rearrange(o_lin, "b h n d -> b n (h d)")
         o_lin = self.o_proj(o_lin)
