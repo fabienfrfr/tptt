@@ -1,9 +1,7 @@
 # LiZA: LineariZe Attention Injection
 
-LiZA is a modular Python library designed to inject efficient linearized attention mechanisms-such as `Memory as Gate` (describes in [Titans](https://arxiv.org/html/2501.00663v1)) in pretrained transformers. 
-
+**LiZA** is a modular Python library designed to inject efficient linearized attention mechanisms-such as *Memory as Gate* (described in [Titans](https://arxiv.org/html/2501.00663v1))-into pretrained transformers.
 It leverages the [flash-linear-attention](https://github.com/fla-org/flash-linear-attention) library for high-performance implementations, enabling scalable and memory-efficient attention computations.
-
 
 ---
 
@@ -26,31 +24,31 @@ cd liza
 make install
 ```
 
-*Note*: `flash-linear-attention` requires a CUDA-enabled GPU and compatible PyTorch version.
+> **Note**: `flash-linear-attention` requires a CUDA-enabled GPU and a compatible PyTorch version.
 
 ---
 
 ## Usage Example
 
+### 1. Injecting Linear Attention
+
 ```python
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from liza.injector import inject_linear_attention
 
-# Charger votre modèle (ex: Llama, Mistral, etc.)
+# Load your model (e.g., Llama, Mistral, etc.)
 model_name = "TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
 model = AutoModelForCausalLM.from_pretrained(model_name).to("cuda:0")
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-# Injecter l’attention linéaire dans les modules voulus
-target_modules = []
-for name, module in model.named_modules():
-    if name.endswith('self_attn'):
-        target_modules.append(name)
-        
+# Identify target attention modules
+target_modules = [name for name, module in model.named_modules() if name.endswith('self_attn')]
+
+# Inject linear attention with delta_rule operator
 model_ = inject_linear_attention(
     model,
     model.config,
-    target_modules=target_modules, #["model.layers.0.self_attn", "model.layers.1.self_attn"],
+    target_modules=target_modules,
     operator_mode="delta_rule",
     fla_weight=0.5,
     chunk_size=64,
@@ -63,19 +61,19 @@ with torch.no_grad():
     output = model_.generate(
         **inputs,
         max_new_tokens=50,
-        do_sample=False  # déterministe
+        do_sample=False  # deterministic
     )
 
-print(tokenizer.decode(output[0], skip_special_tokens=True))
-
+print(tokenizer.decode(output[^2_0], skip_special_tokens=True))
 ```
 
-```python
 
+### 2. Fine-tuning with PEFT (LoRA) and LiZA Callback
+
+```python
 from transformers import TrainingArguments, Trainer
 from peft import LoraConfig, get_peft_model
 from datasets import load_dataset
-
 from liza.injector import AdjustMaGWeightCallback
 
 peft_config = LoraConfig(
@@ -87,7 +85,6 @@ peft_config = LoraConfig(
     target_modules=["q_proj", "v_proj"]
 )
 model = get_peft_model(model_, peft_config)
-#model.print_trainable_parameters()
 
 training_args = TrainingArguments(
     per_device_train_batch_size=2,
@@ -130,7 +127,7 @@ trainer = Trainer(
 trainer.train()
 
 model.save_pretrained("./liza_llama-instruct_model")
-tokenizer.save_pretrained("./iza_llama-instruct_model")
+tokenizer.save_pretrained("./liza_llama-instruct_model")
 ```
 
 
@@ -167,11 +164,31 @@ See `requirements.txt` for the full list.
 
 ---
 
-## Contact
+## Citation
 
-For questions or support, please open an issue on the GitHub repository or contact the maintainer.
+If you use LiZA in your academic work, please cite:
+
+```bibtex
+@misc{furfaro2025liza,
+  author       = {Fabien Furfaro},
+  title        = {LiZA: LineariZe Attention Injection},
+  year         = {2025},
+  publisher    = {GitHub},
+  howpublished = {\url{https://github.com/fabienfrfr/LiZA}}
+}
+```
+
 
 ---
 
-This README provides a concise overview, installation instructions, usage example, and development notes to help users get started quickly with LiZA. Let me know if you want me to generate a `CHANGELOG.md` or examples folder as well!
+## Contact
 
+For questions or support, please open an issue on the [GitHub repository](https://github.com/fabienfrfr/LiZA) or contact the maintainer.
+
+---
+
+This README provides a concise overview, installation instructions, usage examples, and development notes to help users get started quickly with LiZA.
+
+---
+
+Let me know if you want me to generate a `CHANGELOG.md` or an examples folder as well!
