@@ -1,6 +1,6 @@
-# LiZA: LineariZe Attention Injection
+# TPTT: Transforming Pretrained Transformers into Titans
 
-**LiZA** is a modular Python library designed to inject efficient linearized attention mechanisms-such as *Memory as Gate* (described in [Titans](https://arxiv.org/html/2501.00663v1))-into pretrained transformers.
+**LiZA** (LineariZe Attention Injection) is a modular Python library designed to inject efficient linearized attention mechanisms-such as *Memory as Gate* (described in [Titans](https://arxiv.org/html/2501.00663v1))-into pretrained transformers.
 It leverages the [flash-linear-attention](https://github.com/fla-org/flash-linear-attention) library for high-performance implementations, enabling scalable and memory-efficient attention computations.
 
 ---
@@ -152,10 +152,10 @@ make test
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.12+
 - PyTorch
 - einops
-- pydantic
+- Transformers
 - flash-linear-attention
 
 See `requirements.txt` for the full list.
