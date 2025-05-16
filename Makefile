@@ -1,4 +1,4 @@
-.PHONY: install test clean lint coverage coverage-html build publish
+.PHONY: install test clean lint coverage coverage-html build publish docs
 
 install:
 	pip install -r requirements.txt
@@ -28,3 +28,6 @@ publish:
 	poetry export --without-hashes --format=requirements.txt --output=requirements.txt
 	poetry build
 	poetry publish --username __token__ --password $(PYPI_TOKEN)
+
+docs:
+	cd docs && make html && make clean

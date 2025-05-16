@@ -1,13 +1,13 @@
 import torch
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from transformers import TrainingArguments, Trainer
+from transformers import (AutoModelForCausalLM, AutoTokenizer, Trainer,
+                          TrainingArguments)
 
 from .config import TpttConfig
 from .injection import inject_linear_attention
-from .utils import instruction_format
 from .tuner import AdjustMaGWeightCallback
+from .utils import instruction_format
 
 
 class TpttModel:

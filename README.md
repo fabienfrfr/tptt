@@ -77,7 +77,7 @@ make test
 
 ## Development
 
-- Code is organized into modular components under the `liza/` directory.
+- Code is organized into modular components under the `src/tptt` directory.
 - Use `pytest` for testing.
 - Contributions and feature requests are welcome!
 
