@@ -2,9 +2,12 @@ import torch
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import TrainingArguments, Trainer
 
 from .config import TpttConfig
 from .injection import inject_linear_attention
+from .utils import instruction_format
+from .tuner import AdjustMaGWeightCallback
 
 
 class TpttModel:
@@ -21,7 +24,7 @@ class TpttModel:
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
         self.config = config
         self.get_target_modules()
-        self.inject_linear_attention()
+        self.inject_liza_attention()
 
     def get_target_modules(self):
         """Load the model and tokenizer."""
@@ -33,7 +36,7 @@ class TpttModel:
 
     def inject_liza_attention(self):
         """Inject LiZA attention into the model."""
-        self.model_ = inject_linear_attention(
+        self.model = inject_linear_attention(
             self.model,
             self.model.config,
             target_modules=self.target_modules,
@@ -46,7 +49,7 @@ class TpttModel:
         """Generate text using the model."""
         inputs = self.tokenizer(prompt, return_tensors="pt")
         with torch.no_grad():
-            output = self.model_.generate(
+            output = self.model.generate(
                 **inputs, max_new_tokens=50, do_sample=False  # deterministic
             )
         return self.tokenizer.decode(output[0], skip_special_tokens=True)
@@ -63,7 +66,14 @@ class TpttModel:
         ),
     ):
         """Inject LoRA parameters into the model."""
-        self.model_ = get_peft_model(self.model, peft_config)
+        self.model = get_peft_model(self.model, peft_config)
+
+    def tokenize(self, sample):
+        tokens = self.tokenizer(
+            sample["text"], truncation=True, max_length=256, padding="max_length"
+        )
+        tokens["labels"] = tokens["input_ids"].copy()
+        return tokens
 
     def train(
         self,
@@ -80,7 +90,7 @@ class TpttModel:
         ),
         callbacks: list = [
             AdjustMaGWeightCallback(
-                self.model_,
+                self.model,
                 initial_weight=0.01,
                 final_weight=0.5,
                 transition_step=500,
@@ -89,8 +99,8 @@ class TpttModel:
     ):
         """Train the model with the given dataset."""
         dataset = dataset.map(instruction_format)
-        tokenized_dataset = dataset.map(tokenize)
-        Trainer(
+        tokenized_dataset = dataset.map(self.tokenize, batched=True)
+        trainer = Trainer(
             model=self.model,
             args=training_args,
             train_dataset=tokenized_dataset,
@@ -101,7 +111,7 @@ class TpttModel:
 
     def save_model(self, path: str):
         """Save the model to the specified path."""
-        self.model_.save_pretrained(path)
+        self.model.save_pretrained(path)
         self.tokenizer.save_pretrained(path)
 
 
