@@ -1,7 +1,7 @@
 [project]
-name = "liza"
+name = "tptt"
 version = "0.1.0"
-description = "LiZA : LineariZed Attention Injector (FLA) for Transformers Models"
+description = "TPTT : Transforming Pretrained Transformers into Titans"
 authors = [
     {name = "fabienfrfr",email = "fabien.furfaro@gmail.com"}
 ]

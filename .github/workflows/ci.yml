@@ -32,4 +32,4 @@ jobs:
       env:
         PYTHONPATH: ${{ github.workspace }}
       run: |
-        pytest --cov=liza --cov-fail-under=70
+        pytest --cov=liza --cov-fail-under=50

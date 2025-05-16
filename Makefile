@@ -4,17 +4,17 @@ install:
 	pip install -r requirements.txt
 
 lint:
-	isort liza/ tests/
-	python -m pylint liza/ tests/
+	isort src/ tests/
+	python -m pylint src/ tests/
 
 test:
 	@export $(shell cat .env | xargs) && pytest --tb=short -v
 
 coverage:
-	pytest --cov=liza --cov-report=term-missing
+	pytest --cov=src --cov-report=term-missing
 
 coverage-html:
-	pytest --cov=liza --cov-report=html
+	pytest --cov=src --cov-report=html
 
 clean:
 	rm -rf build dist *.egg-info .pytest_cache

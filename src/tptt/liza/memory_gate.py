@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from torch import nn
 
-from .attention_operator import get_attention_operator
+from .mapping import get_attention_operator
 from .utils import get_valid_chunk_size, repeat_kv
 
 

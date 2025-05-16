@@ -1,8 +1,8 @@
-"""Unit tests for liza.utils utility functions."""
+"""Unit tests for tptt.utils utility functions."""
 
 import torch
 
-from liza.utils import get_valid_chunk_size, match_dim, repeat_kv
+from src.tptt.liza.utils import get_valid_chunk_size, match_dim, repeat_kv
 
 
 def test_repeat_kv():
@@ -31,9 +31,6 @@ def test_get_valid_chunk_size():
     assert get_valid_chunk_size(127, 64) == 1
     assert get_valid_chunk_size(128, 64) == 64
     assert get_valid_chunk_size(120, 64) == 60
-
-
-from liza.utils import match_dim
 
 
 def test_match_dim_interpolate():
