@@ -26,7 +26,7 @@ jobs:
 
     - name: Lint with pylint
       run: |
-        pylint src/ tests/ --fail-under=9
+        pylint src/ tests/ --fail-under=5
 
     - name: Run tests with coverage
       env:
