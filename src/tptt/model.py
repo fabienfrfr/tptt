@@ -1,10 +1,10 @@
 import torch
+from datasets import load_dataset
+from peft import LoraConfig, get_peft_model
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from .config import TpttConfig
-from transformers import AutoModelForCausalLM, AutoTokenizer
 from .injection import inject_linear_attention
-from peft import LoraConfig, get_peft_model
-from datasets import load_dataset
 
 
 class TpttModel:
