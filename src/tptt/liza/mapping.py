@@ -107,9 +107,7 @@ class AttentionOperator(nn.Module):
                 query[i], key[i], key_beta[i], value_beta[i], state
             )
             output[i] = chunk_out
-        return output.reshape(seq_len, head_dim), state.reshape(
-            batch_size, num_heads, head_dim
-        )
+        return output.reshape(seq_len, head_dim), state.reshape(head_dim, head_dim)
 
 
 def get_attention_operator(mode, head_dim=None):
