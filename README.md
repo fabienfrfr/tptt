@@ -61,24 +61,12 @@ if __name__ == "__main__":
 
 ```
 
-
----
-
-## Testing
-
-Run the test suite with:
-
-```bash
-make test
-```
-
-
 ---
 
 ## Development
 
 - Code is organized into modular components under the `src/tptt` directory.
-- Use `pytest` for testing.
+- Use `pytest` for testing and `sphinx` for documentation.
 - Contributions and feature requests are welcome!
 
 ---
@@ -100,7 +88,7 @@ See `requirements.txt` for the full list.
 If you use TPTT in your academic work, please cite:
 
 ```bibtex
-@misc{furfaro2025liza,
+@misc{furfaro2025tptt,
   author       = {Fabien Furfaro},
   title        = {TPTT: Transforming Pretrained Transformer into Titans},
   year         = {2025},

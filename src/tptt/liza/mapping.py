@@ -27,7 +27,9 @@ class AttentionOperator(nn.Module):
         recurrent_state = options.get("recurrent_state", None)
 
         if self.mode == "delta_rule":
-            return self.chunk_delta_rule_forward(q, k, v, beta, chunk_size)
+            return self.chunk_delta_rule_forward(
+                q, k, v, beta, chunk_size, initial_state=recurrent_state
+            )
         if self.mode == "gla":
             if fused_chunk_gla is None or fused_recurrent_gla is None:
                 raise RuntimeError("GLA kernels are not available: CUDA required.")
@@ -53,7 +55,9 @@ class AttentionOperator(nn.Module):
         raise ValueError(f"Unknown operator mode: {self.mode}")
 
     @staticmethod
-    def chunk_delta_rule_forward(query, key, value, beta, chunk_size):
+    def chunk_delta_rule_forward(
+        query, key, value, beta, chunk_size, initial_state=None
+    ):
         """Chunkwise delta rule attention computation."""
 
         batch_size, num_heads, seq_len, head_dim = query.shape
@@ -77,7 +81,12 @@ class AttentionOperator(nn.Module):
         value_beta = value * beta
 
         output = torch.empty_like(value)
-        state = torch.zeros(head_dim, head_dim, device=query.device, dtype=query.dtype)
+        # initialize the state
+        state = (
+            initial_state
+            if initial_state is not None
+            else torch.zeros(head_dim, head_dim, device=query.device, dtype=query.dtype)
+        )
 
         def process_chunk(query_i, key_i, key_beta_i, value_beta_i, state):
             t_matrix = -(key_beta_i @ key_i.t()).tril(-1)
@@ -98,7 +107,9 @@ class AttentionOperator(nn.Module):
                 query[i], key[i], key_beta[i], value_beta[i], state
             )
             output[i] = chunk_out
-        return output.reshape(seq_len, head_dim), None
+        return output.reshape(seq_len, head_dim), state.reshape(
+            batch_size, num_heads, head_dim
+        )
 
 
 def get_attention_operator(mode, head_dim=None):

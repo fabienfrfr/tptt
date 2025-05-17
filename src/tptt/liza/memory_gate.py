@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 from einops import rearrange
 from torch import nn
+from transformers.cache_utils import Cache as MemoryCache
 
 from .mapping import get_attention_operator
 from .utils import get_valid_chunk_size, repeat_kv
@@ -17,6 +18,7 @@ class LiZAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
     def __init__(  # pylint: disable=too-many-arguments, too-many-positional-arguments
         self,
         base_attn: nn.Module,
+        layer_idx: int,
         config,  # PretrainedConfig
         operator_mode: str = "delta_rule",
         mag_weight: float = 0.5,
@@ -34,7 +36,9 @@ class LiZAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
         """
         super().__init__()
         self.base_attn = base_attn
+        self.layer_idx = layer_idx
 
+        self.max_position_embeddings = getattr(config, "max_position_embeddings", 2048)
         self.attention_dropout = config.attention_dropout
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_attention_heads
@@ -58,6 +62,9 @@ class LiZAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
             output_size=self.head_dim * self.num_key_value_heads
         )
         self.operator = get_attention_operator(operator_mode, self.head_dim)
+
+        # Memory cache
+        self.memory_cache = MemoryCache()
 
     def forward(  # pylint: disable=too-many-locals
         self,
@@ -111,11 +118,33 @@ class LiZAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
         total_length = batch_size * num_heads * seq_len
         valid_chunk_size = get_valid_chunk_size(total_length, self.max_chunk_size)
 
+        # Get latent memory
+        last_state = None
+        if len(self.memory_cache.states) > 0:
+            last_state = self.memory_cache.from_legacy_cache(-1)
+        recurrent_state = (
+            last_state["recurrent_state"] if last_state is not None else None
+        )
+
         # Linear attention
-        o_lin, _ = self.operator(q, k, v, beta=g, chunk_size=valid_chunk_size)
+        o_lin, recurrent_state = self.operator(
+            q,
+            k,
+            v,
+            beta=g,
+            chunk_size=valid_chunk_size,
+            recurrent_state=recurrent_state,
+        )
         o_lin = o_lin.reshape(batch_size, num_heads, seq_len, head_dim)
         o_lin = rearrange(o_lin, "b h n d -> b n (h d)")
         o_lin = self.o_proj(o_lin)
+
+        # Save recurrent state
+        if self.memory_cache is not None:
+            self.memory_cache.update(
+                recurrent_state=recurrent_state,
+                offset=q.shape[1],
+            )
 
         # Standard attention
         o_base, attn_weights = self.base_attn(

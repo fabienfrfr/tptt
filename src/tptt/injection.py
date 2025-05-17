@@ -4,6 +4,7 @@ from torch import nn
 from transformers.configuration_utils import PretrainedConfig
 
 from .liza.memory_gate import LiZAttention
+from .utils import extract_layer_idx
 
 
 def inject_linear_attention(  # pylint: disable=too-many-arguments, too-many-positional-arguments
@@ -21,11 +22,13 @@ def inject_linear_attention(  # pylint: disable=too-many-arguments, too-many-pos
             *path, last = name.split(".")
             for p in path:
                 parent = getattr(parent, p)
+            layer_idx = extract_layer_idx(name)
             setattr(
                 parent,
                 last,
                 LiZAttention(
                     getattr(parent, last),
+                    layer_idx=layer_idx,
                     config=config,
                     operator_mode=operator_mode,
                     mag_weight=mag_weight,
