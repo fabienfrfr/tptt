@@ -6,9 +6,9 @@ import torch
 import torch.nn.functional as F
 from einops import rearrange
 from torch import nn
-from transformers.cache_utils import Cache as MemoryCache
 
-from .mapping import get_attention_operator
+from ..utils import MemoryCache
+from .mapping_func import get_attention_operator
 from .utils import get_valid_chunk_size, repeat_kv
 
 
@@ -64,7 +64,7 @@ class LiZAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
         self.operator = get_attention_operator(operator_mode, self.head_dim)
 
         # Memory cache
-        self.memory_cache = MemoryCache()
+        self.memory_cache = MemoryCache  # classmethod
 
     def forward(  # pylint: disable=too-many-locals
         self,
@@ -121,7 +121,7 @@ class LiZAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
         # Get latent memory
         last_state = None
         if len(self.memory_cache.states) > 0:
-            last_state = self.memory_cache.from_legacy_cache(-1)
+            last_state = self.memory_cache.states[-1]
         recurrent_state = (
             last_state["recurrent_state"] if last_state is not None else None
         )

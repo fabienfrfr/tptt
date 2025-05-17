@@ -5,7 +5,7 @@ import pytest
 import torch
 from torch import nn
 
-from src.tptt.liza.mapping import AttentionOperator
+from src.tptt.liza.mapping_func import AttentionOperator
 
 
 @pytest.fixture

@@ -4,7 +4,7 @@
 import pytest
 import torch
 
-from src.tptt.liza.mapping import AttentionOperator
+from src.tptt.liza.mapping_func import AttentionOperator
 
 
 def test_forward_shape(
