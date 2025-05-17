@@ -143,7 +143,7 @@ class LiZAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
         if self.memory_cache is not None:
             self.memory_cache.update(
                 recurrent_state=recurrent_state,
-                offset=q.shape[1],
+                layer_idx=self.layer_idx,
             )
 
         # Standard attention
