@@ -1,7 +1,8 @@
 """Utilities to inject LiZA linear attention and manage mag_weight scheduling."""
 
-from typing import Any, Dict, List
+from typing import Dict
 
+import torch
 from torch import nn
 from transformers.configuration_utils import PretrainedConfig
 
@@ -16,7 +17,7 @@ def inject_linear_attention(  # pylint: disable=too-many-arguments, too-many-pos
     operator_mode: str = "delta_rule",
     mag_weight: float = 0.5,
     max_chunk_size: int = 64,
-    previous_state: List[Dict[str, Any]] = [],
+    previous_state: Dict[int, Dict[str, torch.Tensor]] = {},
 ):
     """Replace target modules in a model with LiZAttention."""
     # Reset the memory cache if no previous state is provided
@@ -42,6 +43,7 @@ def inject_linear_attention(  # pylint: disable=too-many-arguments, too-many-pos
                     operator_mode=operator_mode,
                     mag_weight=mag_weight,
                     max_chunk_size=max_chunk_size,
+                    memory_state=previous_state,
                 ),
             )
     return model

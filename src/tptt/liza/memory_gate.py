@@ -1,6 +1,6 @@
 """Linear Attention module for LiZA."""
 
-from typing import Optional
+from typing import Dict, Optional
 
 import torch
 import torch.nn.functional as F
@@ -9,7 +9,7 @@ from torch import nn
 
 from ..utils import MemoryCache
 from .mapping_func import get_attention_operator
-from .utils import get_valid_chunk_size, repeat_kv
+from .utils import repeat_kv
 
 
 class LiZAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
@@ -24,6 +24,7 @@ class LiZAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
         mag_weight: float = 0.5,
         max_chunk_size: int = 64,
         use_rotary: bool = False,
+        memory_state: Optional[Dict[int, torch.Tensor]] = None,
     ):
         """
         Args:
@@ -65,6 +66,8 @@ class LiZAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
 
         # Memory cache
         self.memory_cache = MemoryCache  # classmethod
+        if not memory_state:
+            MemoryCache.update(None, layer_idx)
 
     def forward(  # pylint: disable=too-many-locals
         self,
@@ -107,23 +110,18 @@ class LiZAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
         g = F.logsigmoid(g) / gate_logit_normalizer
 
         q, k, v, g = (x.to(torch.float32).contiguous() for x in (q, k, v, g))
+        batch_size, num_heads, seq_len, head_dim = q.shape
 
         if self.use_rotary:
             print(
                 "[LinearAttention] Applying rotary embedding (not implemented in this snippet)"
             )
 
-        # Validate chunk size
-        batch_size, num_heads, seq_len, head_dim = q.shape
-        total_length = batch_size * num_heads * seq_len
-        valid_chunk_size = get_valid_chunk_size(total_length, self.max_chunk_size)
-
-        # Get latent memory
-        last_state = None
-        if len(self.memory_cache.states) > 0:
-            last_state = self.memory_cache.states[-1]
+        # Get latent memory (last state)
         recurrent_state = (
-            last_state["recurrent_state"] if last_state is not None else None
+            self.memory_cache.states[self.layer_idx]
+            if self.memory_cache.states[self.layer_idx] is not None
+            else None
         )
 
         # Linear attention
@@ -132,7 +130,7 @@ class LiZAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
             k,
             v,
             beta=g,
-            chunk_size=valid_chunk_size,
+            chunk_size=self.max_chunk_size,
             recurrent_state=recurrent_state,
         )
         o_lin = o_lin.reshape(batch_size, num_heads, seq_len, head_dim)

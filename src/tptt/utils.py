@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Dict, Optional
 
 import torch
 
@@ -14,34 +14,26 @@ class MemoryCache:
     The cache is shared between all instances of MemoryCache.
     """
 
-    states: List[Dict[str, Any]] = []
+    states: Dict[int, torch.Tensor] = {}
 
     @classmethod
     def reset(cls) -> None:
         """
         Resets the shared cache for all layers.
         """
-        cls.states = []
+        cls.states = {}
 
     @classmethod
     def update(
         cls,
         recurrent_state: Optional[torch.Tensor] = None,
         layer_idx: int = 0,
-    ) -> Dict[str, Any]:
+    ):
         """
         Updates the cache with the new `recurrent_state` for the layer `layer_idx`.
         If the layer does not exist in the cache yet, it is created.
         """
-
-        if len(cls.states) <= layer_idx:
-            state = dict(recurrent_state=recurrent_state)
-            cls.states.append(state)
-        else:
-            state = cls.states[layer_idx]
-            if recurrent_state is not None:
-                state["recurrent_state"] = recurrent_state
-        return state
+        cls.states[layer_idx] = recurrent_state
 
 
 def extract_layer_idx(module_name: str) -> int:

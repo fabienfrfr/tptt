@@ -6,12 +6,7 @@ import torch
 from torch import nn
 
 from src.tptt.liza.mapping_func import AttentionOperator
-
-
-@pytest.fixture
-def tensor_dim():
-    """Fixture for tensor dimension."""
-    return 64
+from src.tptt.liza.memory_gate import LiZAttention
 
 
 @pytest.fixture
@@ -40,12 +35,30 @@ def num_heads():
 
 @pytest.fixture
 def head_dim():
-    """Fixture for num_heads."""
+    """Fixture for dim heads."""
     return 8
 
 
 @pytest.fixture
-def random_tensors(batch_size, num_heads, seq_len, head_dim):
+def num_key_value_heads():
+    """Fixture for num_key_value_heads."""
+    return 4
+
+
+@pytest.fixture
+def attention_dropout():
+    """Fixture for dim heads."""
+    return 0.1
+
+
+@pytest.fixture
+def tensor_dim(head_dim, num_heads):
+    """Fixture for tensor dimension."""
+    return head_dim * num_heads
+
+
+@pytest.fixture
+def random_qkv_tensors(batch_size, num_heads, seq_len, head_dim):
     """Fixture for random Q, K, V, beta tensors."""
     q = torch.randn(batch_size, num_heads, seq_len, head_dim)
     k = torch.randn(batch_size, num_heads, seq_len, head_dim)
@@ -55,13 +68,19 @@ def random_tensors(batch_size, num_heads, seq_len, head_dim):
 
 
 @pytest.fixture
+def random_hidden_tensor(batch_size, seq_len, tensor_dim):
+    """Fixture for random hidden_states tensors."""
+    return torch.randn(batch_size, seq_len, tensor_dim)
+
+
+@pytest.fixture
 def operator(tensor_dim):
     """Fixture for AttentionOperator instance."""
     return AttentionOperator(mode="delta_rule", head_dim=tensor_dim)
 
 
 @pytest.fixture
-def dummy_base_attn():
+def dummy_base_attn(tensor_dim):
     """Fixture for a dummy base attention module."""
 
     class DummyAttention(nn.Module):
@@ -69,32 +88,50 @@ def dummy_base_attn():
 
         def __init__(self):
             super().__init__()
-            self.q_proj = nn.Linear(64, 64)
-            self.k_proj = nn.Linear(64, 64)
-            self.v_proj = nn.Linear(64, 64)
-            self.o_proj = nn.Linear(64, 64)
+            self.q_proj = nn.Linear(tensor_dim, tensor_dim)
+            self.k_proj = nn.Linear(tensor_dim, tensor_dim)
+            self.v_proj = nn.Linear(tensor_dim, tensor_dim)
+            self.o_proj = nn.Linear(tensor_dim, tensor_dim)
 
         def forward(self, x, **kwargs):  # pylint: disable=unused-argument
             """Simulate output of a standard attention module."""
-            return torch.randn(x.shape[0], x.shape[1], 64), None
+            return torch.randn(x.shape[0], x.shape[1], tensor_dim), None
 
     return DummyAttention()
 
 
 @pytest.fixture
-def dummy_config():
+def dummy_config(
+    tensor_dim, num_heads, num_key_value_heads, attention_dropout, head_dim
+):
     """Fixture for a dummy configuration object."""
 
-    class DummyConfig:  # pylint: disable=too-few-public-methods
+    class DummyConfig:
         """Minimal dummy config for LiZAttention."""
 
-        hidden_size = 64
-        num_attention_heads = 8
-        num_key_value_heads = 4
-        attention_dropout = 0.1
-        head_dim = 8
+        def __init__(
+            self,
+            tensor_dim,
+            num_heads,
+            num_key_value_heads,
+            attention_dropout,
+            head_dim,
+        ):
+            self.hidden_size = tensor_dim
+            self.num_attention_heads = num_heads
+            self.num_key_value_heads = num_key_value_heads
+            self.attention_dropout = attention_dropout
+            self.head_dim = head_dim
 
-    return DummyConfig
+    return DummyConfig(
+        tensor_dim, num_heads, num_key_value_heads, attention_dropout, head_dim
+    )
+
+
+@pytest.fixture
+def liza_attention(dummy_base_attn, dummy_config):
+    """Fixture for AttentionOperator instance."""
+    return LiZAttention(dummy_base_attn, 1, dummy_config)
 
 
 @pytest.fixture

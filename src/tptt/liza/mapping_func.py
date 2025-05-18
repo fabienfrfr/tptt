@@ -9,6 +9,8 @@ else:
     fused_chunk_gla = None  # pylint: disable=invalid-name
     fused_recurrent_gla = None  # pylint: disable=invalid-name
 
+from .utils import get_valid_chunk_size
+
 
 class AttentionOperator(nn.Module):
     """Base class for linear attention operators."""
@@ -61,15 +63,17 @@ class AttentionOperator(nn.Module):
         """Chunkwise delta rule attention computation."""
 
         batch_size, num_heads, seq_len, head_dim = query.shape
+        total_length = batch_size * num_heads * seq_len
 
         # Flatten for operator: [batch_size * num_heads * seq_len, head_dim]
-        q_lin = query.reshape(batch_size * num_heads * seq_len, head_dim)
-        k_lin = key.reshape(batch_size * num_heads * seq_len, head_dim)
-        v_lin = value.reshape(batch_size * num_heads * seq_len, head_dim)
-        g_lin = beta.reshape(batch_size * num_heads * seq_len, head_dim)
+        q_lin = query.reshape(total_length, head_dim)
+        k_lin = key.reshape(total_length, head_dim)
+        v_lin = value.reshape(total_length, head_dim)
+        g_lin = beta.reshape(total_length, head_dim)
 
-        seq_len, head_dim = q_lin.shape
-        num_chunks = seq_len // chunk_size
+        # Update with Validate chunk size
+        chunk_size = get_valid_chunk_size(total_length, chunk_size)
+        num_chunks = total_length // chunk_size
 
         # Reshaping for chunk
         query = q_lin.reshape(num_chunks, chunk_size, head_dim)
@@ -89,6 +93,7 @@ class AttentionOperator(nn.Module):
         )
 
         def process_chunk(query_i, key_i, key_beta_i, value_beta_i, state):
+            """Process a single chunk with closed form delta rule"""
             t_matrix = -(key_beta_i @ key_i.t()).tril(-1)
             t_matrix = t_matrix + torch.eye(
                 chunk_size, device=query.device, dtype=query.dtype
@@ -103,11 +108,12 @@ class AttentionOperator(nn.Module):
             return o_intra + o_inter, state
 
         for i in range(num_chunks):
+            # Process a all chunk with recurrent form delta rule
             chunk_out, state = process_chunk(
                 query[i], key[i], key_beta[i], value_beta[i], state
             )
             output[i] = chunk_out
-        return output.reshape(seq_len, head_dim), state.reshape(head_dim, head_dim)
+        return output.reshape(total_length, head_dim), state.reshape(head_dim, head_dim)
 
 
 def get_attention_operator(mode, head_dim=None):
