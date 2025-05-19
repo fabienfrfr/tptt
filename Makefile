@@ -1,4 +1,4 @@
-.PHONY: install test clean lint coverage coverage-html build publish docs
+.PHONY: install test clean lint coverage coverage-html build publish docs sys-deps
 
 install:
 	pip install -r requirements.txt
@@ -21,6 +21,7 @@ clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} +
 
 build:
+	poetry self update
 	poetry export --without-hashes --format=requirements.txt --output=requirements.txt
 	poetry build
 
@@ -31,3 +32,30 @@ publish:
 
 docs:
 	cd docs && make html && make clean
+
+sys-deps:
+	sudo apt-get update && sudo apt-get install -y \
+		build-essential \
+		python3-dev \
+		libncurses-dev \
+		libreadline-dev \
+		libsqlite3-dev \
+		libbz2-dev \
+		libffi-dev \
+		libssl-dev \
+		libgdbm-dev \
+		zlib1g-dev \
+		liblzma-dev \
+		tk-dev \
+		uuid-dev \
+		libxml2-dev \
+		libxslt1-dev \
+		libjpeg-dev \
+		libtiff-dev \
+		pkg-config \
+		xz-utils \
+		gdb \
+		pkg-config \
+		lcov \
+		lzma \
+		xz-utils

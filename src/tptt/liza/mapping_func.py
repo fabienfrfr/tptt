@@ -33,27 +33,7 @@ class AttentionOperator(nn.Module):
                 q, k, v, beta, chunk_size, initial_state=recurrent_state
             )
         if self.mode == "gla":
-            if fused_chunk_gla is None or fused_recurrent_gla is None:
-                raise RuntimeError("GLA kernels are not available: CUDA required.")
-            if self.training or q.shape[-2] > 1:
-                return fused_chunk_gla(
-                    q,
-                    k,
-                    v,
-                    beta,
-                    scale=scale,
-                    initial_state=recurrent_state,
-                    output_final_state=True,
-                )
-            return fused_recurrent_gla(
-                q,
-                k,
-                v,
-                beta,
-                scale=scale,
-                initial_state=recurrent_state,
-                output_final_state=True,
-            )
+            return self.gla_forward(q, k, v, beta, scale, initial_state=recurrent_state)
         raise ValueError(f"Unknown operator mode: {self.mode}")
 
     @staticmethod
@@ -61,7 +41,6 @@ class AttentionOperator(nn.Module):
         query, key, value, beta, chunk_size, initial_state=None
     ):
         """Chunkwise delta rule attention computation."""
-
         batch_size, num_heads, seq_len, head_dim = query.shape
         total_length = batch_size * num_heads * seq_len
 
@@ -114,6 +93,32 @@ class AttentionOperator(nn.Module):
             )
             output[i] = chunk_out
         return output.reshape(total_length, head_dim), state.reshape(head_dim, head_dim)
+
+    @staticmethod
+    def gla_forward(q, k, v, beta, scale, initial_state=None):
+        """Forward pass for GLA attention operator."""
+        if fused_chunk_gla is None or fused_recurrent_gla is None:
+            raise RuntimeError("GLA kernels are not available: CUDA required.")
+        if q.shape[-2] > 1:
+            # Training or sequence length > 1
+            return fused_chunk_gla(
+                q,
+                k,
+                v,
+                beta,
+                scale=scale,
+                initial_state=initial_state,
+                output_final_state=True,
+            )
+        return fused_recurrent_gla(
+            q,
+            k,
+            v,
+            beta,
+            scale=scale,
+            initial_state=initial_state,
+            output_final_state=True,
+        )
 
 
 def get_attention_operator(mode, head_dim=None):

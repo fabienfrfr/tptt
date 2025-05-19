@@ -2,38 +2,54 @@
 from __future__ import annotations
 
 import re
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import torch
 
 
-class MemoryCache:
+class Cache:
     """
-    A cache used for storing hidden states produced by models.
-    It stores the states of each layer as a tensor of shape `[batch_size, key_dim, value_dim]`.
-    The cache is shared between all instances of MemoryCache.
+    Cache for storing intermediate states of linear attention layers.
+    Supports a sliding window if max_length is set.
     """
 
-    states: Dict[int, torch.Tensor] = {}
+    def __init__(self, max_length: Optional[int] = None):
+        self.states: List[Dict[str, torch.Tensor]] = []
+        self.seen_tokens = 0
+        self.max_length = (
+            max_length  # Maximum number of tokens to keep per layer (if set)
+        )
 
-    @classmethod
-    def reset(cls) -> None:
-        """
-        Resets the shared cache for all layers.
-        """
-        cls.states = {}
+    def __getitem__(self, layer_idx: int) -> Optional[Dict[str, torch.Tensor]]:
+        # Retrieve the state for the given layer index, if it exists
+        if layer_idx < len(self.states):
+            return self.states[layer_idx]
+        return None
 
-    @classmethod
-    def update(
-        cls,
-        recurrent_state: Optional[torch.Tensor] = None,
-        layer_idx: int = 0,
-    ):
+    def update(self, layer_idx: int, **kwargs):
         """
-        Updates the cache with the new `recurrent_state` for the layer `layer_idx`.
-        If the layer does not exist in the cache yet, it is created.
+        Update the cache for a given layer.
+        If max_length is set, keep only the last max_length tokens in any sequence state.
         """
-        cls.states[layer_idx] = recurrent_state
+        if len(self.states) <= layer_idx:
+            self.states.append(kwargs)
+        else:
+            for key, value in kwargs.items():
+                # Apply sliding window if needed
+                if (
+                    self.max_length is not None
+                    and isinstance(value, torch.Tensor)
+                    and value.dim() > 1  # assume [batch, seq_len, ...]
+                ):
+                    value = value[:, -self.max_length :].contiguous()
+                self.states[layer_idx][key] = value
+
+    def reset(self):
+        self.states.clear()
+        self.seen_tokens = 0
+
+    def get_max_length(self):
+        return self.max_length
 
 
 def extract_layer_idx(module_name: str) -> int:

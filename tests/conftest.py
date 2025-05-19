@@ -1,12 +1,16 @@
 # pylint: disable=redefined-outer-name
 """Tests for the AttentionOperator module."""
 
+from unittest.mock import MagicMock
+
 import pytest
 import torch
 from torch import nn
 
 from src.tptt.liza.mapping_func import AttentionOperator
 from src.tptt.liza.memory_gate import LiZAttention
+from src.tptt.model import TpttConfig
+from src.tptt.utils import Cache
 
 
 @pytest.fixture
@@ -47,8 +51,14 @@ def num_key_value_heads():
 
 @pytest.fixture
 def attention_dropout():
-    """Fixture for dim heads."""
+    """Fixture for attention_dropout."""
     return 0.1
+
+
+@pytest.fixture
+def max_length():
+    """Fixture for max_length."""
+    return 2048
 
 
 @pytest.fixture
@@ -102,7 +112,12 @@ def dummy_base_attn(tensor_dim):
 
 @pytest.fixture
 def dummy_config(
-    tensor_dim, num_heads, num_key_value_heads, attention_dropout, head_dim
+    tensor_dim,
+    num_heads,
+    num_key_value_heads,
+    attention_dropout,
+    head_dim,
+    max_length,
 ):
     """Fixture for a dummy configuration object."""
 
@@ -116,15 +131,22 @@ def dummy_config(
             num_key_value_heads,
             attention_dropout,
             head_dim,
+            max_length,
         ):
             self.hidden_size = tensor_dim
             self.num_attention_heads = num_heads
             self.num_key_value_heads = num_key_value_heads
             self.attention_dropout = attention_dropout
             self.head_dim = head_dim
+            self.max_length = max_length
 
     return DummyConfig(
-        tensor_dim, num_heads, num_key_value_heads, attention_dropout, head_dim
+        tensor_dim,
+        num_heads,
+        num_key_value_heads,
+        attention_dropout,
+        head_dim,
+        max_length,
     )
 
 
@@ -146,3 +168,39 @@ def dummy_decoder(dummy_base_attn):
             self.self_attn = dummy_base_attn
 
     return DummyDecoder
+
+
+@pytest.fixture
+def cache():
+    return Cache()
+
+
+@pytest.fixture
+def cache_with_max_length(max_length):
+    return Cache(max_length=max_length)
+
+
+@pytest.fixture
+def dummy_tptt_config():
+    return TpttConfig(model_name="test-model")
+
+
+@pytest.fixture
+def dummy_tokenizer():
+    tokenizer = MagicMock()
+    tokenizer.return_tensors = "pt"
+    tokenizer.decode.return_value = "Generated text"
+    tokenizer.return_value = {
+        "input_ids": [0, 1, 2],
+        "attention_mask": [1, 1, 1],
+    }
+    return tokenizer
+
+
+@pytest.fixture
+def dummy_model():
+    model = MagicMock()
+    model.named_modules.return_value = [("layer.self_attn", MagicMock())]
+    model.generate.return_value = [[0, 1, 2]]
+    model.save_pretrained = MagicMock()
+    return model

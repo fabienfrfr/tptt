@@ -2,7 +2,6 @@
 """Tests for the AttentionOperator module."""
 
 import pytest
-import torch
 
 from src.tptt.liza.mapping_func import AttentionOperator
 

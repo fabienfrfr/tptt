@@ -4,10 +4,28 @@ from peft import LoraConfig, get_peft_model
 from transformers import (AutoModelForCausalLM, AutoTokenizer, Trainer,
                           TrainingArguments)
 
-from .config import TpttConfig
 from .injection import inject_linear_attention
 from .tuner import AdjustMaGWeightCallback
 from .utils import instruction_format
+
+
+class TpttConfig:
+    """Configuration for TPTT model."""
+
+    def __init__(
+        self,
+        model_name: str,
+        target_modules_names: str = "self_attn",
+        operator_mode: str = "delta_rule",
+        mag_weight: float = 0.5,
+        max_chunk_size: int = 64,
+    ):
+        """Initialize the TPTT configuration."""
+        self.model_name = model_name
+        self.target_modules_names = target_modules_names
+        self.operator_mode = operator_mode
+        self.mag_weight = mag_weight
+        self.max_chunk_size = max_chunk_size
 
 
 class TpttModel:
@@ -16,7 +34,7 @@ class TpttModel:
     def __init__(
         self,
         model_name: str,
-        config: TpttConfig = TpttConfig(),
+        config: TpttConfig,
     ):
         """Initialize the TpttModel with the given parameters."""
         self.model_name = model_name
@@ -88,14 +106,6 @@ class TpttModel:
             save_strategy="epoch",
             report_to="tensorboard",
         ),
-        callbacks: list = [
-            AdjustMaGWeightCallback(
-                self.model,
-                initial_weight=0.01,
-                final_weight=0.5,
-                transition_step=500,
-            )
-        ],
     ):
         """Train the model with the given dataset."""
         dataset = dataset.map(instruction_format)

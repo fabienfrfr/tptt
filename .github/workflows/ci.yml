@@ -26,10 +26,10 @@ jobs:
 
     - name: Lint with pylint
       run: |
-        pylint src/ tests/ --fail-under=5
+        pylint src/ tests/ --fail-under=7
 
     - name: Run tests with coverage
       env:
         PYTHONPATH: ${{ github.workspace }}
       run: |
-        pytest --cov=src --cov-fail-under=50
+        pytest --cov=src --cov-fail-under=70

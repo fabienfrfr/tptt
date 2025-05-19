@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from torch import nn
 
-from ..utils import MemoryCache
+from ..utils import Cache
 from .mapping_func import get_attention_operator
 from .utils import repeat_kv
 
@@ -20,11 +20,11 @@ class LiZAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
         base_attn: nn.Module,
         layer_idx: int,
         config,  # PretrainedConfig
+        cache: Cache = None,
         operator_mode: str = "delta_rule",
         mag_weight: float = 0.5,
         max_chunk_size: int = 64,
         use_rotary: bool = False,
-        memory_state: Optional[Dict[int, torch.Tensor]] = None,
     ):
         """
         Args:
@@ -65,9 +65,7 @@ class LiZAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
         self.operator = get_attention_operator(operator_mode, self.head_dim)
 
         # Memory cache
-        self.memory_cache = MemoryCache  # classmethod
-        if not memory_state:
-            MemoryCache.update(None, layer_idx)
+        self.cache = cache or Cache(max_length=config.max_length)
 
     def forward(  # pylint: disable=too-many-locals
         self,
@@ -117,10 +115,11 @@ class LiZAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
                 "[LinearAttention] Applying rotary embedding (not implemented in this snippet)"
             )
 
-        # Get latent memory (last state)
+        # Retrieve recurrent state from cache
+        last_state = self.cache[self.layer_idx]
         recurrent_state = (
-            self.memory_cache.states[self.layer_idx]
-            if self.memory_cache.states[self.layer_idx] is not None
+            last_state["recurrent_state"]
+            if last_state is not None and "recurrent_state" in last_state
             else None
         )
 
@@ -138,11 +137,7 @@ class LiZAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
         o_lin = self.o_proj(o_lin)
 
         # Save recurrent state
-        if self.memory_cache is not None:
-            self.memory_cache.update(
-                recurrent_state=recurrent_state,
-                layer_idx=self.layer_idx,
-            )
+        self.cache.update(self.layer_idx, recurrent_state=recurrent_state)
 
         # Standard attention
         o_base, attn_weights = self.base_attn(
