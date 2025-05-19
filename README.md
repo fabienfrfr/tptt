@@ -31,30 +31,37 @@ make install
 
 ## Complete Usage Example
 
+```bash
+pip install -q -U git+https://github.com/fabienfrfr/tptt@main
+```
+
 ```python
+import tptt
+from datasets import load_dataset
+
 def main(training=True):
-    # 1. Transforming Pretrained Transformer into Memory as Gate (Inject LiZA by default)
-    model_name = "TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
-    tptt_model = TpttModel(model_name)
+    # 1. Config et modèle
+    config = tptt.TpttConfig(base_model_name="gpt2")
+    model = tptt.TpttModel(config)
 
-    if training :
-        # 2. Inject LoRA parameters into the model
-        tptt_model.inject_lora_parameters()
+    # 2. (Optionnel) Injection LoRA
+    model.add_lora()
 
-        # 3. Load a small subset of the dataset for training
-        from datasets import load_dataset
-        dataset = load_dataset("yahma/alpaca-cleaned")["train"].select(range(100))  # 100 samples for quick testing
+    # 3. Préparation du dataset
+    dataset = load_dataset("yahma/alpaca-cleaned")["train"].select(range(100))
+    # (instruction_format est importé via tptt)
+    dataset = dataset.map(tptt.instruction_format)
 
-        # 4. Train the model
-        tptt_model.train(dataset=dataset)
+    # 4. Entraînement
+    trainer = tptt.TpttTrainer(model, dataset)
+    trainer.train()
 
-    # 5. Generate text with the trained model
-    prompt = "Once upon a time,"
-    generated_text = tptt_model.generate(prompt)
-    print("Generated text:", generated_text)
+    # 5. Génération
+    pipe = tptt.TpttPipeline(model)
+    print(pipe("Once upon a time,"))
 
-    # 6. Save the model and tokenizer
-    tptt_model.save_model("./liza_llama-instruct_model")
+    # 6. Sauvegarde
+    model.save_pretrained("./my_tptt_model")
 
 if __name__ == "__main__":
     main()

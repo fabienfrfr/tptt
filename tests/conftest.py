@@ -9,7 +9,7 @@ from torch import nn
 
 from src.tptt.liza.mapping_func import AttentionOperator
 from src.tptt.liza.memory_gate import LiZAttention
-from src.tptt.model import TpttConfig
+from src.tptt.modeling_tptt import TpttConfig
 from src.tptt.utils import Cache
 
 

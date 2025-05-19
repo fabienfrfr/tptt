@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from src.tptt.model import TpttModel
+from src.tptt.modeling_tptt import TpttModel
 
 
 def test_tptt_config_default_values(dummy_tptt_config):
@@ -12,9 +12,11 @@ def test_tptt_config_default_values(dummy_tptt_config):
     assert config.max_chunk_size == 64
 
 
-@patch("src.tptt.model.AutoModelForCausalLM.from_pretrained")  # injecting the model
-@patch("src.tptt.model.AutoTokenizer.from_pretrained")  # injecting the tokenizer
-@patch("src.tptt.injection.inject_linear_attention")  # injecting the attention
+@patch(
+    "src.tptt.modeling_tptt.AutoModelForCausalLM.from_pretrained"
+)  # mocking the model
+@patch("src.tptt.modeling_tptt.AutoTokenizer.from_pretrained")  # mocking the tokenizer
+@patch("src.tptt.injection.inject_linear_attention")  # mocking the attention injection
 def test_tpttmodel_init(
     mock_inject,
     mock_tokenizer,
@@ -24,12 +26,15 @@ def test_tpttmodel_init(
     cache,
     dummy_tptt_config,
 ):
+    # Arrange: set up return values for the mocks
     mock_model.return_value = dummy_model
     mock_tokenizer.return_value = dummy_tokenizer
-    mock_inject.return_value = dummy_model
+    mock_inject.return_value = (dummy_model, cache)
 
-    tptt = TpttModel(model_name="dummy-model", config=dummy_tptt_config)
-    assert tptt.model_name == "dummy-model"
-    assert tptt.model[0] is dummy_model
+    # Act: instantiate the TpttModel
+    tptt = TpttModel(dummy_tptt_config)
+
+    # Assert
+    assert tptt.config == dummy_tptt_config
+    assert tptt.model is dummy_model
     assert tptt.tokenizer == dummy_tokenizer
-    assert "self_attn" in tptt.target_modules[0]
