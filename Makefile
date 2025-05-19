@@ -23,10 +23,14 @@ clean:
 build:
 	poetry self update
 	poetry export --without-hashes --format=requirements.txt --output=requirements.txt
+	sed 's/;.*//' requirements.txt | grep -v '^[[:space:]]*$$' > requirements.txt.tmp
+	mv requirements.txt.tmp requirements.txt
 	poetry build
 
 publish:
 	poetry export --without-hashes --format=requirements.txt --output=requirements.txt
+	sed 's/;.*//' requirements.txt | grep -v '^[[:space:]]*$$' > requirements.txt.tmp
+	mv requirements.txt.tmp requirements.txt
 	poetry build
 	poetry publish --username __token__ --password $(PYPI_TOKEN)
 
