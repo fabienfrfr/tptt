@@ -34,8 +34,35 @@ class LiZAttention(nn.Module):
         self.use_rotary = use_rotary
         self.cache = cache or Cache(max_length=getattr(config, "max_length", 2048))
 
+        (
+            self.num_heads,
+            self.head_dim,
+            self.num_key_value_heads,
+            self.num_key_value_groups,
+        ) = self.get_attention_parameters(base_attn)
         self.operator = get_attention_operator(operator_mode)
-        self.pool_g = None
+        self.pool_g = nn.AdaptiveAvgPool1d(
+            output_size=self.head_dim * self.num_key_value_heads
+        )
+
+    def get_attention_parameters(self, base_attn):
+        """Retrieve the attention parameters from the base attention module."""
+        num_heads = (
+            getattr(base_attn, "num_heads", None)
+            or getattr(base_attn, "num_attention_heads", None)
+            or getattr(base_attn, "num_q_heads", None)
+        )
+        head_dim = getattr(base_attn, "head_dim", None)
+        num_key_value_heads = (
+            getattr(base_attn, "num_key_value_heads", None)
+            or getattr(base_attn, "num_kv_heads", None)
+            or getattr(base_attn, "num_k_heads", None)
+            or num_heads  # fallback
+        )
+        num_key_value_groups = getattr(base_attn, "num_key_value_groups", None) or (
+            num_heads // num_key_value_heads if num_heads and num_key_value_heads else 1
+        )
+        return num_heads, head_dim, num_key_value_heads, num_key_value_groups
 
     def split_qkv(self, qkv):
         """Split the QKV tensor into separate Q, K, and V tensors."""
@@ -59,7 +86,6 @@ class LiZAttention(nn.Module):
         **kwargs,
     ):
         base_attn = self.base_attn
-
         # 1. Dynamic retrieval of projections
         if hasattr(base_attn, "q_proj"):
             # LLama, OLMO and Mistral style
@@ -80,50 +106,21 @@ class LiZAttention(nn.Module):
         else:
             raise ValueError("Unsupported attention module: cannot find projections.")
 
-        # 2. Dynamic retrieval of attention parameters
-        num_heads = (
-            getattr(base_attn, "num_heads", None)
-            or getattr(base_attn, "num_attention_heads", None)
-            or getattr(base_attn, "num_q_heads", None)
-        )
-        head_dim = getattr(base_attn, "head_dim", None)
-        if head_dim is None and num_heads is not None:
-            head_dim = q.shape[-1] // num_heads
-        num_key_value_heads = (
-            getattr(base_attn, "num_key_value_heads", None)
-            or getattr(base_attn, "num_kv_heads", None)
-            or getattr(base_attn, "num_k_heads", None)
-            or num_heads  # fallback
-        )
-        num_key_value_groups = getattr(base_attn, "num_key_value_groups", None) or (
-            num_heads // num_key_value_heads if num_heads and num_key_value_heads else 1
-        )
-
-        # 3. Pool_g
-        if (
-            self.pool_g is None
-            or getattr(self.pool_g, "output_size", None)
-            != head_dim * num_key_value_heads
-        ):
-            self.pool_g = nn.AdaptiveAvgPool1d(
-                output_size=head_dim * num_key_value_heads
-            )
-
         g = self.pool_g(k)
 
         if attention_mask is not None:
             v = torch.mul(v, attention_mask[:, -v.shape[-2] :, None])
 
         # 4. Reshape for multi-head
-        q = rearrange(q, "b n (h d) -> b h n d", h=num_heads)
-        k = rearrange(k, "b n (h d) -> b h n d", h=num_key_value_heads)
-        v = rearrange(v, "b n (h d) -> b h n d", h=num_key_value_heads)
-        g = rearrange(g, "b n (h m) -> b h n m", h=num_key_value_heads)
+        q = rearrange(q, "b n (h d) -> b h n d", h=self.num_heads)
+        k = rearrange(k, "b n (h d) -> b h n d", h=self.num_key_value_heads)
+        v = rearrange(v, "b n (h d) -> b h n d", h=self.num_key_value_heads)
+        g = rearrange(g, "b n (h m) -> b h n m", h=self.num_key_value_heads)
 
         # Repeat for GQA
-        k = repeat_kv(k, num_key_value_groups)
-        v = repeat_kv(v, num_key_value_groups)
-        g = repeat_kv(g, num_key_value_groups)
+        k = repeat_kv(k, self.num_key_value_groups)
+        v = repeat_kv(v, self.num_key_value_groups)
+        g = repeat_kv(g, self.num_key_value_groups)
 
         q = F.softmax(q, dim=-1)
         k = F.softmax(k, dim=-1)

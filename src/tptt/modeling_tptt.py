@@ -23,7 +23,7 @@ class TpttConfig(PretrainedConfig):
     def __init__(
         self,
         base_model_name="gpt2",
-        base_tokenizer_name="gpt2",
+        base_tokenizer_name=None,
         target_modules_names=["attn", "self_attn", "attention"],
         operator_mode="delta_rule",
         mag_weight=0.5,
@@ -32,7 +32,9 @@ class TpttConfig(PretrainedConfig):
     ):
         super().__init__(**kwargs)
         self.base_model_name = base_model_name
-        self.base_tokenizer_name = base_tokenizer_name
+        self.base_tokenizer_name = (
+            base_model_name if base_tokenizer_name is None else base_tokenizer_name
+        )
         self.target_modules_names = target_modules_names
         self.operator_mode = operator_mode
         self.mag_weight = mag_weight
@@ -179,9 +181,8 @@ class TpttTrainer:
             model=self.model.model,
             args=self.training_args,
             train_dataset=self.tokenized_dataset,
-            tokenizer=self.tokenizer,
+            processing_class=self.tokenizer,
             callbacks=[self.liza_callback],
-            label_names=["labels"],
         )
         trainer.train()
 
