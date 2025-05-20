@@ -1,6 +1,8 @@
+import torch
+
 from unittest.mock import patch
 
-from src.tptt.modeling_tptt import TpttModel
+from src.tptt.modeling_tptt import TpttModel, TpttTrainer, TpttPipeline
 
 
 def test_tptt_config_default_values(dummy_tptt_config):
@@ -38,3 +40,25 @@ def test_tpttmodel_init(
     assert tptt.config == dummy_tptt_config
     assert tptt.model is dummy_model
     assert tptt.tokenizer == dummy_tokenizer
+
+
+"""
+def test_tpttmodel_add_lora(dummy_tptt_model):
+    # Test LoRA addition with auto-detected target modules
+    original_params = sum(p.numel() for p in dummy_tptt_model.model.parameters())
+
+    dummy_tptt_model.add_lora()
+
+    # Verify LoRA config applied
+    assert hasattr(dummy_tptt_model.model, "peft_config")
+    # Verify trainable parameters increased
+    assert sum(p.numel() for p in dummy_tptt_model.model.parameters()) > original_params
+
+
+@patch("src.tptt.modeling_tptt.Trainer")
+def test_trainer_train(mock_trainer, dummy_tptt_model):
+    trainer = TpttTrainer(dummy_tptt_model)
+    trainer.train()
+
+    mock_trainer.return_value.train.assert_called_once()
+"""

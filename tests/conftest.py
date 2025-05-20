@@ -9,7 +9,7 @@ from torch import nn
 
 from src.tptt.liza.mapping_func import AttentionOperator
 from src.tptt.liza.memory_gate import LiZAttention
-from src.tptt.modeling_tptt import TpttConfig
+from src.tptt.modeling_tptt import TpttConfig, TpttModel
 from src.tptt.utils import Cache
 
 
@@ -260,3 +260,20 @@ def dummy_model():
     model.generate.return_value = [[0, 1, 2]]
     model.save_pretrained = MagicMock()
     return model
+
+
+@pytest.fixture
+def dummy_tptt_model(dummy_tptt_config, dummy_model, dummy_tokenizer, cache, mocker):
+    # Patch les dépendances internes du constructeur TpttModel
+    mocker.patch(
+        "src.tptt.modeling_tptt.AutoModelForCausalLM.from_pretrained",
+        return_value=dummy_model,
+    )
+    mocker.patch(
+        "src.tptt.modeling_tptt.AutoTokenizer.from_pretrained",
+        return_value=dummy_tokenizer,
+    )
+    mocker.patch(
+        "src.tptt.injection.inject_linear_attention", return_value=(dummy_model, cache)
+    )
+    return TpttModel(dummy_tptt_config)
