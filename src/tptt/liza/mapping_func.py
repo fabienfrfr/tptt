@@ -3,9 +3,10 @@
 import torch
 from torch import nn
 
-if torch.cuda.is_available():
+try:
     from fla.ops.gla import fused_chunk_gla, fused_recurrent_gla
-else:
+except ImportError:
+    # Fallback to None if the GLA kernels are not available
     fused_chunk_gla = None  # pylint: disable=invalid-name
     fused_recurrent_gla = None  # pylint: disable=invalid-name
 

@@ -22,9 +22,9 @@ clean:
 
 build:
 	poetry self update
-	poetry export --without-hashes --format=requirements.txt --output=requirements.txt
-	sed 's/;.*//' requirements.txt | grep -v '^[[:space:]]*$$' > requirements.txt.tmp
-	mv requirements.txt.tmp requirements.txt
+	poetry export --without-hashes --format=requirements.txt --output=requirements.tmp
+	sed 's/;.*//' requirements.tmp | grep -v '^[[:space:]]*$$' > requirements.tmp.tmp
+	mv requirements.tmp.tmp requirements.tmp
 	poetry build
 
 publish:
