@@ -1,9 +1,15 @@
 import torch
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model
-from transformers import (AutoModelForCausalLM, AutoTokenizer, Pipeline,
-                          PretrainedConfig, PreTrainedModel, Trainer,
-                          TrainingArguments)
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    Pipeline,
+    PretrainedConfig,
+    PreTrainedModel,
+    Trainer,
+    TrainingArguments,
+)
 
 from .injection import inject_linear_attention
 from .tuner import AdjustMaGWeightCallback
@@ -49,6 +55,11 @@ class TpttModel(PreTrainedModel):
         self.tokenizer = AutoTokenizer.from_pretrained(
             config.base_tokenizer_name, trust_remote_code=True
         )
+        if self.tokenizer.pad_token is None:
+            if self.tokenizer.eos_token is not None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+            else:
+                self.tokenizer.add_special_tokens({"pad_token": "[PAD]"})
         self.cache = Cache()
         self._inject_liza_attention()
 
@@ -136,6 +147,7 @@ class TpttTrainer:
     ):
         self.model = model
         self.tokenizer = model.tokenizer
+
         self.dataset = dataset.map(instruction_format_fn)
         self.tokenized_dataset = self.dataset.map(self.tokenize)
         self.training_args = training_args or TrainingArguments(
