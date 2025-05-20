@@ -144,6 +144,8 @@ def dummy_fused_qkv_attn(tensor_dim, num_q_heads, num_kv_heads, head_dim):
         def __init__(self):
             super().__init__()
             self.num_q_heads = num_q_heads
+            self.num_k_heads = num_kv_heads
+            self.num_v_heads = num_kv_heads
             self.num_kv_heads = num_kv_heads
             self.head_dim = head_dim
             self.qkv_proj = nn.Linear(

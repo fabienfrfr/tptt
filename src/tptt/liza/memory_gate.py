@@ -37,6 +37,21 @@ class LiZAttention(nn.Module):
         self.operator = get_attention_operator(operator_mode)
         self.pool_g = None
 
+    def split_qkv(self, qkv):
+        """Split the QKV tensor into separate Q, K, and V tensors."""
+        base_attn = self.base_attn
+        num_q_heads = getattr(base_attn, "num_q_heads", None)
+        num_k_heads = getattr(base_attn, "num_k_heads", None)
+        num_v_heads = getattr(base_attn, "num_v_heads", None)
+        head_dim = getattr(base_attn, "head_dim", None)
+
+        q_len = num_q_heads * head_dim
+        k_len = num_k_heads * head_dim
+        v_len = num_v_heads * head_dim
+
+        q, k, v = torch.split(qkv, [q_len, k_len, v_len], dim=-1)
+        return q, k, v
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -47,35 +62,15 @@ class LiZAttention(nn.Module):
 
         # 1. Dynamic retrieval of projections
         if hasattr(base_attn, "q_proj"):
+            # LLama, OLMO and Mistral style
             q = base_attn.q_proj(hidden_states)
             k = base_attn.k_proj(hidden_states)
             v = base_attn.v_proj(hidden_states)
             out_proj = base_attn.o_proj
         elif hasattr(base_attn, "qkv_proj"):
+            # OpenELM and GPT-Neo style : QKV fused, split on the last dimension
             qkv = base_attn.qkv_proj(hidden_states)
-            # Get number of heads and head_dim from the module
-            num_q_heads = getattr(base_attn, "num_q_heads", None) or getattr(
-                base_attn, "num_heads", None
-            )
-            num_kv_heads = (
-                getattr(base_attn, "num_kv_heads", None)
-                or getattr(base_attn, "num_key_value_heads", None)
-                or num_q_heads
-            )
-            head_dim = getattr(base_attn, "head_dim", None)
-            assert (
-                num_q_heads is not None
-                and num_kv_heads is not None
-                and head_dim is not None
-            )
-
-            q_end = num_q_heads * head_dim
-            k_end = q_end + num_kv_heads * head_dim
-            v_end = k_end + num_kv_heads * head_dim
-
-            q = qkv[..., :q_end]
-            k = qkv[..., q_end:k_end]
-            v = qkv[..., k_end:v_end]
+            q, k, v = self.split_qkv(qkv)
             out_proj = base_attn.out_proj
         elif hasattr(base_attn, "c_attn") and hasattr(base_attn, "c_proj"):
             # GPT-2 style
