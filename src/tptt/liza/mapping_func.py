@@ -3,12 +3,14 @@
 import torch
 from torch import nn
 
-try:
-    from fla.ops.gla import fused_chunk_gla, fused_recurrent_gla
-except ImportError:
-    # Fallback to None if the GLA kernels are not available
-    fused_chunk_gla = None  # pylint: disable=invalid-name
-    fused_recurrent_gla = None  # pylint: disable=invalid-name
+fused_chunk_gla = None  # pylint: disable=invalid-name
+fused_recurrent_gla = None  # pylint: disable=invalid-name
+
+if torch.cuda.is_available():
+    try:
+        from fla.ops.gla import fused_chunk_gla, fused_recurrent_gla
+    except ImportError:
+        pass
 
 from .utils import get_valid_chunk_size
 

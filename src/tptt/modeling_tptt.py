@@ -102,7 +102,7 @@ class TpttTrainer:
         self.model = model
         self.tokenizer = model.tokenizer
         self.dataset = dataset.map(instruction_format_fn)
-        self.tokenized_dataset = self.dataset.map(self.tokenize, batched=True)
+        self.tokenized_dataset = self.dataset.map(self.tokenize)
         self.training_args = training_args or TrainingArguments(
             output_dir="./tptt_output",
             per_device_train_batch_size=2,
@@ -122,7 +122,10 @@ class TpttTrainer:
 
     def tokenize(self, sample):
         tokens = self.tokenizer(
-            sample["text"], truncation=True, max_length=256, padding="max_length"
+            sample["text"], 
+            truncation=True,
+            max_length=256, 
+            padding="max_length"
         )
         tokens["labels"] = tokens["input_ids"].copy()
         return tokens
