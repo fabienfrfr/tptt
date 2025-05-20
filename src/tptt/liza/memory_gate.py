@@ -28,6 +28,7 @@ class LiZAttention(nn.Module):
     ):
         super().__init__()
         self.base_attn = base_attn
+        self.config = config
         self.layer_idx = layer_idx
         self.mag_weight = mag_weight
         self.max_chunk_size = max_chunk_size
@@ -39,24 +40,25 @@ class LiZAttention(nn.Module):
             self.head_dim,
             self.num_key_value_heads,
             self.num_key_value_groups,
-        ) = self.get_attention_parameters(base_attn)
+        ) = self.get_attention_parameters(base_attn, config)
         self.operator = get_attention_operator(operator_mode)
         self.pool_g = nn.AdaptiveAvgPool1d(
             output_size=self.head_dim * self.num_key_value_heads
         )
 
-    def get_attention_parameters(self, base_attn):
+    def get_attention_parameters(self, base_attn, config):
         """Retrieve the attention parameters from the base attention module."""
+        # first order base attention module and second order config
         num_heads = (
             getattr(base_attn, "num_heads", None)
-            or getattr(base_attn, "num_attention_heads", None)
             or getattr(base_attn, "num_q_heads", None)
+            or getattr(config, "num_attention_heads", None)
         )
         head_dim = getattr(base_attn, "head_dim", None)
         num_key_value_heads = (
-            getattr(base_attn, "num_key_value_heads", None)
-            or getattr(base_attn, "num_kv_heads", None)
+            getattr(base_attn, "num_kv_heads", None)
             or getattr(base_attn, "num_k_heads", None)
+            or getattr(config, "num_key_value_heads", None)
             or num_heads  # fallback
         )
         num_key_value_groups = getattr(base_attn, "num_key_value_groups", None) or (
