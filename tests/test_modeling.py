@@ -6,7 +6,7 @@ from src.tptt.modeling_tptt import TpttModel
 def test_tptt_config_default_values(dummy_tptt_config):
     config = dummy_tptt_config
     assert config.model_name == "test-model"
-    assert config.target_modules_names == "self_attn"
+    assert "self_attn" in config.target_modules_names
     assert config.operator_mode == "delta_rule"
     assert config.mag_weight == 0.5
     assert config.max_chunk_size == 64

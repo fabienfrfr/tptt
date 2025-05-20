@@ -18,11 +18,9 @@ from .utils import get_valid_chunk_size
 class AttentionOperator(nn.Module):
     """Base class for linear attention operators."""
 
-    def __init__(self, mode="delta_rule", head_dim=None, training=False):
+    def __init__(self, mode="delta_rule"):
         super().__init__()
         self.mode = mode
-        self.head_dim = head_dim
-        self.training = training
 
     def forward(self, q, k, v, **options):
         """Forward pass for the attention operator."""
@@ -124,6 +122,6 @@ class AttentionOperator(nn.Module):
         )
 
 
-def get_attention_operator(mode, head_dim=None):
+def get_attention_operator(mode):
     """Factory for AttentionOperator."""
-    return AttentionOperator(mode=mode, head_dim=head_dim)
+    return AttentionOperator(mode=mode)

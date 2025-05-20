@@ -2,11 +2,10 @@
 """Tests for LiZAttention projection sharing."""
 
 
-def test_projection_sharing(dummy_base_attn, liza_attention):
+def test_projection_base_sharing(dummy_base_attn, liza_attention):
     """Test that LiZAttention shares projections with the base attention module."""
     lin_attn = liza_attention
-    assert lin_attn.q_proj is dummy_base_attn.q_proj
-    assert lin_attn.o_proj is dummy_base_attn.o_proj
+    assert lin_attn.base_attn is dummy_base_attn
 
 
 def test_attention_output_shape(

@@ -1,6 +1,6 @@
 """Linear Attention module for LiZA."""
 
-from typing import Dict, Optional
+from typing import Optional
 
 import torch
 import torch.nn.functional as F
@@ -12,10 +12,10 @@ from .mapping_func import get_attention_operator
 from .utils import repeat_kv
 
 
-class LiZAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
+class LiZAttention(nn.Module):
     """LiZA Linear Attention module, mixing linear and vanilla attention."""
 
-    def __init__(  # pylint: disable=too-many-arguments, too-many-positional-arguments
+    def __init__(
         self,
         base_attn: nn.Module,
         layer_idx: int,
@@ -26,80 +26,88 @@ class LiZAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
         max_chunk_size: int = 64,
         use_rotary: bool = False,
     ):
-        """
-        Args:
-            base_attn (nn.Module): Standard attention module.
-            config: Model configuration.
-            operator_mode (str): Mode for attention operator.
-            mag_weight (float): Weight for mixing linear and vanilla attention.
-            chunk_size (int): Chunk size for linear attention.
-            use_rotary (bool): Whether to use rotary embeddings.
-        """
         super().__init__()
         self.base_attn = base_attn
         self.layer_idx = layer_idx
-
-        self.max_position_embeddings = getattr(config, "max_position_embeddings", 2048)
-        self.attention_dropout = config.attention_dropout
-        self.hidden_size = config.hidden_size
-        self.num_heads = config.num_attention_heads
-        self.head_dim = getattr(config, "head_dim", self.hidden_size // self.num_heads)
-        self.num_key_value_heads = config.num_key_value_heads
-        self.num_key_value_groups = self.num_heads // self.num_key_value_heads
-
-        self.embed_dim = config.hidden_size
-        self.mag_weight = mag_weight  # Memory as Gate Weight
+        self.mag_weight = mag_weight
         self.max_chunk_size = max_chunk_size
-
-        # Shared projections
-        self.q_proj = base_attn.q_proj
-        self.k_proj = base_attn.k_proj
-        self.v_proj = base_attn.v_proj
-        self.o_proj = base_attn.o_proj
-
         self.use_rotary = use_rotary
+        self.cache = cache or Cache(max_length=getattr(config, "max_length", 2048))
 
-        self.pool_g = nn.AdaptiveAvgPool1d(
-            output_size=self.head_dim * self.num_key_value_heads
-        )
-        self.operator = get_attention_operator(operator_mode, self.head_dim)
+        self.operator = get_attention_operator(operator_mode)
+        self.pool_g = None
 
-        # Memory cache
-        self.cache = cache or Cache(max_length=config.max_length)
-
-    def forward(  # pylint: disable=too-many-locals
+    def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         **kwargs,
     ):
-        """
-        Forward pass for LiZA Linear Attention.
-        Args:
-            hidden_states (torch.Tensor): Input tensor.
-            attention_mask (Optional[torch.Tensor]): Attention mask.
-            **kwargs: Additional arguments for base attention.
-        Returns:
-            Tuple[torch.Tensor, torch.Tensor]: Output and attention weights.
-        """
-        q = self.q_proj(hidden_states)
-        k = self.k_proj(hidden_states)
-        v = self.v_proj(hidden_states)
+        base_attn = self.base_attn
+
+        # 1. Dynamic retrieval of projections
+        if hasattr(base_attn, "q_proj"):
+            q = base_attn.q_proj(hidden_states)
+            k = base_attn.k_proj(hidden_states)
+            v = base_attn.v_proj(hidden_states)
+            out_proj = base_attn.o_proj
+        elif hasattr(base_attn, "qkv_proj"):
+            qkv = base_attn.qkv_proj(hidden_states)
+            # OpenELM-style: QKV fused, split on the last dimension
+            q, k, v = qkv.chunk(3, dim=-1)
+            out_proj = base_attn.out_proj
+        elif hasattr(base_attn, "c_attn") and hasattr(base_attn, "c_proj"):
+            # GPT-2 style
+            qkv = base_attn.c_attn(hidden_states)
+            q, k, v = qkv.chunk(3, dim=-1)
+            out_proj = base_attn.c_proj
+        else:
+            raise ValueError("Unsupported attention module: cannot find projections.")
+
+        # 2. Dynamic retrieval of attention parameters
+        num_heads = (
+            getattr(base_attn, "num_heads", None)
+            or getattr(base_attn, "num_attention_heads", None)
+            or getattr(base_attn, "num_q_heads", None)
+        )
+        head_dim = getattr(base_attn, "head_dim", None)
+        if head_dim is None and num_heads is not None:
+            head_dim = q.shape[-1] // num_heads
+        num_key_value_heads = (
+            getattr(base_attn, "num_key_value_heads", None)
+            or getattr(base_attn, "num_kv_heads", None)
+            or getattr(base_attn, "num_k_heads", None)
+            or num_heads  # fallback
+        )
+        num_key_value_groups = getattr(base_attn, "num_key_value_groups", None) or (
+            num_heads // num_key_value_heads if num_heads and num_key_value_heads else 1
+        )
+
+        # 3. Pool_g
+        if (
+            self.pool_g is None
+            or getattr(self.pool_g, "output_size", None)
+            != head_dim * num_key_value_heads
+        ):
+            self.pool_g = nn.AdaptiveAvgPool1d(
+                output_size=head_dim * num_key_value_heads
+            )
+
         g = self.pool_g(k)
 
         if attention_mask is not None:
             v = v.mul_(attention_mask[:, -v.shape[-2] :, None])
 
-        # Reshape for multi-head
-        q = rearrange(q, "b n (h d) -> b h n d", h=self.num_heads)
-        k = rearrange(k, "b n (h d) -> b h n d", h=self.num_key_value_heads)
-        v = rearrange(v, "b n (h d) -> b h n d", h=self.num_key_value_heads)
-        g = rearrange(g, "b n (h m) -> b h n m", h=self.num_key_value_heads)
+        # 4. Reshape for multi-head
+        q = rearrange(q, "b n (h d) -> b h n d", h=num_heads)
+        k = rearrange(k, "b n (h d) -> b h n d", h=num_key_value_heads)
+        v = rearrange(v, "b n (h d) -> b h n d", h=num_key_value_heads)
+        g = rearrange(g, "b n (h m) -> b h n m", h=num_key_value_heads)
 
         # Repeat for GQA
-        k = repeat_kv(k, self.num_key_value_groups)
-        v = repeat_kv(v, self.num_key_value_groups)
-        g = repeat_kv(g, self.num_key_value_groups)
+        k = repeat_kv(k, num_key_value_groups)
+        v = repeat_kv(v, num_key_value_groups)
+        g = repeat_kv(g, num_key_value_groups)
 
         q = F.softmax(q, dim=-1)
         k = F.softmax(k, dim=-1)
@@ -134,7 +142,7 @@ class LiZAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
         )
         o_lin = o_lin.reshape(batch_size, num_heads, seq_len, head_dim)
         o_lin = rearrange(o_lin, "b h n d -> b n (h d)")
-        o_lin = self.o_proj(o_lin)
+        o_lin = out_proj(o_lin)
 
         # Save recurrent state
         self.cache.update(self.layer_idx, recurrent_state=recurrent_state)

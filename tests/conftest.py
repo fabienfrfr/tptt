@@ -84,13 +84,13 @@ def random_hidden_tensor(batch_size, seq_len, tensor_dim):
 
 
 @pytest.fixture
-def operator(tensor_dim):
+def operator():
     """Fixture for AttentionOperator instance."""
-    return AttentionOperator(mode="delta_rule", head_dim=tensor_dim)
+    return AttentionOperator(mode="delta_rule")
 
 
 @pytest.fixture
-def dummy_base_attn(tensor_dim):
+def dummy_base_attn(tensor_dim, num_heads, head_dim):
     """Fixture for a dummy base attention module."""
 
     class DummyAttention(nn.Module):
@@ -98,14 +98,17 @@ def dummy_base_attn(tensor_dim):
 
         def __init__(self):
             super().__init__()
-            self.q_proj = nn.Linear(tensor_dim, tensor_dim)
-            self.k_proj = nn.Linear(tensor_dim, tensor_dim)
-            self.v_proj = nn.Linear(tensor_dim, tensor_dim)
-            self.o_proj = nn.Linear(tensor_dim, tensor_dim)
+            self.num_heads = num_heads
+            self.head_dim = head_dim
+            self.q_proj = nn.Linear(tensor_dim, num_heads * head_dim)
+            self.k_proj = nn.Linear(tensor_dim, num_heads * head_dim)
+            self.v_proj = nn.Linear(tensor_dim, num_heads * head_dim)
+            self.o_proj = nn.Linear(num_heads * self.head_dim, tensor_dim)
 
-        def forward(self, x, **kwargs):  # pylint: disable=unused-argument
-            """Simulate output of a standard attention module."""
-            return torch.randn(x.shape[0], x.shape[1], tensor_dim), None
+        def forward(self, x, **kwargs):
+            # Simulate output of a standard attention module
+            # Output: (batch, seq_len, tensor_dim), attn_weights=None
+            return torch.randn(x.shape[0], x.shape[1], x.shape[2]), None
 
     return DummyAttention()
 

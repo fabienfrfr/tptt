@@ -17,7 +17,8 @@ class TpttConfig(PretrainedConfig):
     def __init__(
         self,
         base_model_name="gpt2",
-        target_modules_names="self_attn",
+        base_tokenizer_name="gpt2",
+        target_modules_names=["attn", "self_attn", "attention"],
         operator_mode="delta_rule",
         mag_weight=0.5,
         max_chunk_size=64,
@@ -25,6 +26,7 @@ class TpttConfig(PretrainedConfig):
     ):
         super().__init__(**kwargs)
         self.base_model_name = base_model_name
+        self.base_tokenizer_name = base_tokenizer_name
         self.target_modules_names = target_modules_names
         self.operator_mode = operator_mode
         self.mag_weight = mag_weight
@@ -36,19 +38,30 @@ class TpttModel(PreTrainedModel):
     config_class = TpttConfig
 
     def __init__(self, config: TpttConfig):
-        super().__init__(config)
+        super().__init__(
+            config,
+        )
         self.config = config
-        self.model = AutoModelForCausalLM.from_pretrained(config.base_model_name)
-        self.tokenizer = AutoTokenizer.from_pretrained(config.base_model_name)
+        self.model = AutoModelForCausalLM.from_pretrained(
+            config.base_model_name,
+            trust_remote_code=True,
+        )
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            config.base_tokenizer_name, trust_remote_code=True
+        )
         self.cache = Cache()
         self._inject_liza_attention()
 
     def _inject_liza_attention(self):
         target_modules = [
             name
-            for name, module in self.model.named_modules()
-            if name.endswith(self.config.target_modules_names)
+            for name, _ in self.model.named_modules()
+            if any(name.endswith(suffix) for suffix in self.config.target_modules_names)
         ]
+        if not target_modules:
+            raise ValueError(
+                f"Target modules '{self.config.target_modules_names}' not found in the model."
+            )
         self.model, self.cache = inject_linear_attention(
             self.model,
             self.model.config,
@@ -59,16 +72,38 @@ class TpttModel(PreTrainedModel):
         )
 
     def add_lora(self, lora_config: LoraConfig = None):
+        # Automatically find all attention-related linear modules
         if lora_config is None:
+            # List of common projection names for attention in most architectures
+            candidate_names = [
+                "q_proj",
+                "k_proj",
+                "v_proj",
+                "o_proj",  # Llama, Mistral, OLMo
+                "qkv_proj",
+                "out_proj",  # OpenELM, some GPTs
+                "c_attn",
+                "c_proj",  # GPT-2
+            ]
+            # Find all module names in the model that match these candidates
+            target_modules = [
+                name
+                for name, _ in self.model.named_modules()
+                if any(name.endswith(n) for n in candidate_names)
+            ]
+            # Remove duplicates, just in case
+            target_modules = list(set(target_modules))
+
             lora_config = LoraConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,
                 bias="none",
                 task_type="CAUSAL_LM",
-                target_modules=["q_proj", "v_proj"],
+                target_modules=target_modules,
             )
         self.model = get_peft_model(self.model, lora_config)
+        self.model.print_trainable_parameters()
 
     def forward(self, *args, **kwargs):
         return self.model(*args, **kwargs)
@@ -92,7 +127,7 @@ class TpttTrainer:
     def __init__(
         self,
         model: TpttModel,
-        dataset,
+        dataset=load_dataset("yahma/alpaca-cleaned")["train"],
         instruction_format_fn=instruction_format,
         training_args=None,
         initial_weight=0.01,
@@ -122,10 +157,7 @@ class TpttTrainer:
 
     def tokenize(self, sample):
         tokens = self.tokenizer(
-            sample["text"], 
-            truncation=True,
-            max_length=256, 
-            padding="max_length"
+            sample["text"], truncation=True, max_length=256, padding="max_length"
         )
         tokens["labels"] = tokens["input_ids"].copy()
         return tokens
@@ -156,28 +188,3 @@ class TpttPipeline(Pipeline):
                 do_sample=kwargs.get("do_sample", False),
             )
         return self.tokenizer.decode(output[0], skip_special_tokens=True)
-
-
-if __name__ == "__main__":
-    config = TpttConfig(
-        base_model_name="TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
-    )
-    tptt_model = TpttModel(config)
-
-    # Optionnal : LoRA
-    tptt_model.add_lora()
-
-    # Train
-    dataset = load_dataset("yahma/alpaca-cleaned")["train"].select(range(1000))
-    trainer = TpttTrainer(tptt_model, dataset)
-    trainer.train()
-
-    # Save
-    tptt_model.save_pretrained("./liza_llama-instruct_model")
-
-    # Inference pipeline
-    pipeline = TpttPipeline(tptt_model)
-    print(pipeline("Once upon a time,"))
-
-    # Loading the model
-    # tptt_model2 = TpttModel.from_pretrained("./liza_llama-instruct_model")
