@@ -96,7 +96,7 @@ class LiZAttention(nn.Module):
         g = self.pool_g(k)
 
         if attention_mask is not None:
-            v = v.mul_(attention_mask[:, -v.shape[-2] :, None])
+            v = torch.mul(v, attention_mask[:, -v.shape[-2] :, None])
 
         # 4. Reshape for multi-head
         q = rearrange(q, "b n (h d) -> b h n d", h=num_heads)
