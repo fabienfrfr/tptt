@@ -53,8 +53,29 @@ class LiZAttention(nn.Module):
             out_proj = base_attn.o_proj
         elif hasattr(base_attn, "qkv_proj"):
             qkv = base_attn.qkv_proj(hidden_states)
-            # OpenELM-style: QKV fused, split on the last dimension
-            q, k, v = qkv.chunk(3, dim=-1)
+            # Get number of heads and head_dim from the module
+            num_q_heads = getattr(base_attn, "num_q_heads", None) or getattr(
+                base_attn, "num_heads", None
+            )
+            num_kv_heads = (
+                getattr(base_attn, "num_kv_heads", None)
+                or getattr(base_attn, "num_key_value_heads", None)
+                or num_q_heads
+            )
+            head_dim = getattr(base_attn, "head_dim", None)
+            assert (
+                num_q_heads is not None
+                and num_kv_heads is not None
+                and head_dim is not None
+            )
+
+            q_end = num_q_heads * head_dim
+            k_end = q_end + num_kv_heads * head_dim
+            v_end = k_end + num_kv_heads * head_dim
+
+            q = qkv[..., :q_end]
+            k = qkv[..., q_end:k_end]
+            v = qkv[..., k_end:v_end]
             out_proj = base_attn.out_proj
         elif hasattr(base_attn, "c_attn") and hasattr(base_attn, "c_proj"):
             # GPT-2 style

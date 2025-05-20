@@ -56,6 +56,18 @@ def attention_dropout():
 
 
 @pytest.fixture
+def num_q_heads():
+    """Fixture for num_q_heads."""
+    return 8
+
+
+@pytest.fixture
+def num_kv_heads():
+    """Fixture for num_kv_heads."""
+    return 2
+
+
+@pytest.fixture
 def max_length():
     """Fixture for max_length."""
     return 2048
@@ -81,6 +93,17 @@ def random_qkv_tensors(batch_size, num_heads, seq_len, head_dim):
 def random_hidden_tensor(batch_size, seq_len, tensor_dim):
     """Fixture for random hidden_states tensors."""
     return torch.randn(batch_size, seq_len, tensor_dim)
+
+
+@pytest.fixture
+def attention_mask(random_hidden_tensor, seq_len, batch_size):
+    """Fixture for attention_mask tensors."""
+    return torch.ones(
+        batch_size,
+        seq_len,
+        dtype=random_hidden_tensor.dtype,
+        device=random_hidden_tensor.device,
+    )
 
 
 @pytest.fixture
@@ -111,6 +134,28 @@ def dummy_base_attn(tensor_dim, num_heads, head_dim):
             return torch.randn(x.shape[0], x.shape[1], x.shape[2]), None
 
     return DummyAttention()
+
+
+@pytest.fixture
+def dummy_fused_qkv_attn(tensor_dim, num_q_heads, num_kv_heads, head_dim):
+    """Fixture for a dummy attention module with fused QKV projection (OpenELM/Falcon style)."""
+
+    class DummyFusedQKVAttention(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.num_q_heads = num_q_heads
+            self.num_kv_heads = num_kv_heads
+            self.head_dim = head_dim
+            self.qkv_proj = nn.Linear(
+                tensor_dim, num_q_heads * head_dim + 2 * num_kv_heads * head_dim
+            )
+            self.out_proj = nn.Linear(num_q_heads * head_dim, tensor_dim)
+
+        def forward(self, x, **kwargs):
+            # Simulate output of a standard attention module
+            return torch.randn(x.shape[0], x.shape[1], x.shape[2]), None
+
+    return DummyFusedQKVAttention()
 
 
 @pytest.fixture
@@ -157,6 +202,12 @@ def dummy_config(
 def liza_attention(dummy_base_attn, dummy_config):
     """Fixture for AttentionOperator instance."""
     return LiZAttention(dummy_base_attn, 1, dummy_config)
+
+
+@pytest.fixture
+def liza_qkv_attention(dummy_fused_qkv_attn, dummy_config):
+    """Fixture for AttentionOperator with qkv."""
+    return LiZAttention(dummy_fused_qkv_attn, 0, dummy_config)
 
 
 @pytest.fixture
