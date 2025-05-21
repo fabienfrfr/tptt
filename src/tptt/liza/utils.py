@@ -1,6 +1,12 @@
 """Utility functions for LiZA attention."""
 
 import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+
 import torch
 import torch.nn.functional as F
 

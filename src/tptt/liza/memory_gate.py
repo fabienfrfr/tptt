@@ -1,7 +1,12 @@
 """Linear Attention module for LiZA."""
 
-from typing import Optional
 import logging
+from typing import Optional
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
 
 import torch
 import torch.nn.functional as F
