@@ -96,8 +96,9 @@ class LiZAttention(nn.Module):
 
         g = self.pool_g(k)
 
-        # attention_mask: [batch, seq], v: [batch, seq, ...]
-        if attention_mask is not None:
+        # 2. Manage attention mask (not needed if HuggingFace style)
+        if attention_mask is not None and 1 < attention_mask.dim() < 4:
+            # attention_mask: [batch, seq], v: [batch, seq, ...]
             v = apply_attention_mask(attention_mask, v)
 
         # 4. Reshape for multi-head
