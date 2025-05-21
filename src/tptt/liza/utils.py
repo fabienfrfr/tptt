@@ -1,5 +1,6 @@
 """Utility functions for LiZA attention."""
 
+import logging
 import torch
 import torch.nn.functional as F
 
@@ -25,6 +26,8 @@ def split_qkv(base_attn, qkv):
 
 
 def apply_attention_mask(attention_mask, v):
+    logging.info(f"attention_mask.shape: {attention_mask.shape}")
+    logging.info(f"v.shape: {v.shape}")
     # Squeeze all singleton dims except batch (dim=0)
     mask = attention_mask.squeeze(
         dim=tuple(

@@ -1,6 +1,7 @@
 """Linear Attention module for LiZA."""
 
 from typing import Optional
+import logging
 
 import torch
 import torch.nn.functional as F
@@ -72,6 +73,7 @@ class LiZAttention(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         **kwargs,
     ):
+        logging.info(f"hidden_states.shape: {hidden_states.shape}")
         base_attn = self.base_attn
         # 1. Dynamic retrieval of projections
         if hasattr(base_attn, "q_proj"):

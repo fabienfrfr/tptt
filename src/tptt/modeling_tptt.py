@@ -3,9 +3,16 @@
 import torch
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model
-from transformers import (AutoModelForCausalLM, AutoTokenizer,
-                          DataCollatorWithPadding, Pipeline, PretrainedConfig,
-                          PreTrainedModel, Trainer, TrainingArguments)
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    DataCollatorWithPadding,
+    Pipeline,
+    PretrainedConfig,
+    PreTrainedModel,
+    Trainer,
+    TrainingArguments,
+)
 
 from .injection import inject_linear_attention
 from .liza.memory_gate import LiZAttention
@@ -195,8 +202,8 @@ class TpttTrainer:
             self.tokenized_dataset = tokenized_dataset
 
         self.data_collator = DataCollatorWithPadding(
-            self.tokenizer, padding="longest", return_tensors="pt"
-        )
+            self.tokenizer, padding="max_length", return_tensors="pt"
+        )  # padding="longest"
 
         self.training_args = training_args or TrainingArguments(
             output_dir="./tptt_output",
@@ -230,7 +237,7 @@ class TpttTrainer:
             samples["text"],
             truncation=True,
             max_length=256,
-            padding="longest",
+            padding="max_length",  # "longest",
             return_attention_mask=True,
         )
         tokens["labels"] = tokens["input_ids"].copy()
