@@ -1,30 +1,48 @@
+"""This module implements the TPTT model with linear attention and LoRA support."""
+
 import torch
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model
-from transformers import (AutoModelForCausalLM, AutoTokenizer, Pipeline,
-                          PretrainedConfig, PreTrainedModel, Trainer,
-                          TrainingArguments)
+from transformers import (AutoModelForCausalLM, AutoTokenizer,
+                          DataCollatorWithPadding, Pipeline, PretrainedConfig,
+                          PreTrainedModel, Trainer, TrainingArguments)
 
 from .injection import inject_linear_attention
+from .liza.memory_gate import LiZAttention
 from .tuner import AdjustMaGWeightCallback
 from .utils import Cache, instruction_format
 
 
-# 1. CONFIGURATION
 class TpttConfig(PretrainedConfig):
+    """Configuration class for the TPTT model."""
+
     model_type = "tptt"
 
     def __init__(
         self,
         base_model_name="gpt2",
         base_tokenizer_name=None,
-        target_modules_names=["attn", "self_attn", "attention"],
+        target_modules_names=None,
         operator_mode="delta_rule",
         mag_weight=0.5,
         max_chunk_size=64,
         **kwargs,
     ):
+        """
+        Initialize TpttConfig with model and attention parameters.
+
+        Args:
+            base_model_name (str): Name of the base model.
+            base_tokenizer_name (str): Name of the tokenizer.
+            target_modules_names (list): List of module name suffixes to target.
+            operator_mode (str): Operator mode for attention.
+            mag_weight (float): Weight for MaG.
+            max_chunk_size (int): Maximum chunk size for attention.
+            **kwargs: Additional keyword arguments.
+        """
         super().__init__(**kwargs)
+        if target_modules_names is None:
+            target_modules_names = ["attn", "self_attn", "attention"]
         self.base_model_name = base_model_name
         self.base_tokenizer_name = (
             base_model_name if base_tokenizer_name is None else base_tokenizer_name
@@ -35,14 +53,19 @@ class TpttConfig(PretrainedConfig):
         self.max_chunk_size = max_chunk_size
 
 
-# 2. MODELE
 class TpttModel(PreTrainedModel):
+    """TPTT model wrapper with linear attention and LoRA support."""
+
     config_class = TpttConfig
 
     def __init__(self, config: TpttConfig):
-        super().__init__(
-            config,
-        )
+        """
+        Initialize TpttModel.
+
+        Args:
+            config (TpttConfig): Model configuration.
+        """
+        super().__init__(config)
         self.config = config
         self.model = AutoModelForCausalLM.from_pretrained(
             config.base_model_name,
@@ -60,6 +83,7 @@ class TpttModel(PreTrainedModel):
         self._inject_liza_attention()
 
     def _inject_liza_attention(self):
+        """Inject LiZAttention into target modules."""
         target_modules = [
             name
             for name, _ in self.model.named_modules()
@@ -72,6 +96,7 @@ class TpttModel(PreTrainedModel):
         self.model, self.cache = inject_linear_attention(
             self.model,
             self.model.config,
+            liza_attention=LiZAttention,
             target_modules=target_modules,
             operator_mode=self.config.operator_mode,
             mag_weight=self.config.mag_weight,
@@ -79,9 +104,13 @@ class TpttModel(PreTrainedModel):
         )
 
     def add_lora(self, lora_config: LoraConfig = None):
-        # Automatically find all attention-related linear modules
+        """
+        Add LoRA adapters to the model.
+
+        Args:
+            lora_config (LoraConfig, optional): LoRA configuration.
+        """
         if lora_config is None:
-            # List of common projection names for attention in most architectures
             candidate_names = [
                 "q_proj",
                 "k_proj",
@@ -92,15 +121,12 @@ class TpttModel(PreTrainedModel):
                 "c_attn",
                 "c_proj",  # GPT-2
             ]
-            # Find all module names in the model that match these candidates
             target_modules = [
                 name
                 for name, _ in self.model.named_modules()
                 if any(name.endswith(n) for n in candidate_names)
             ]
-            # Remove duplicates, just in case
             target_modules = list(set(target_modules))
-
             lora_config = LoraConfig(
                 r=8,
                 lora_alpha=16,
@@ -113,15 +139,18 @@ class TpttModel(PreTrainedModel):
         self.model.print_trainable_parameters()
 
     def forward(self, *args, **kwargs):
+        """Forward pass."""
         return self.model(*args, **kwargs)
 
     def save_pretrained(self, path: str, **kwargs):
+        """Save model, tokenizer, and config to the given path."""
         self.model.save_pretrained(path, **kwargs)
         self.tokenizer.save_pretrained(path)
         self.config.save_pretrained(path)
 
     @classmethod
     def from_pretrained(cls, path: str, **kwargs):
+        """Load model, tokenizer, and config from the given path."""
         config = TpttConfig.from_pretrained(path)
         obj = cls(config)
         obj.model = AutoModelForCausalLM.from_pretrained(path, **kwargs)
@@ -129,23 +158,46 @@ class TpttModel(PreTrainedModel):
         return obj
 
 
-# 3. TRAINER
 class TpttTrainer:
+    """Trainer for TPTT models."""
+
     def __init__(
         self,
         model: TpttModel,
-        dataset=load_dataset("yahma/alpaca-cleaned")["train"],
-        instruction_format_fn=instruction_format,
+        tokenized_dataset=None,
         training_args=None,
         initial_weight=0.01,
         final_weight=0.5,
         transition_step=500,
     ):
+        """
+        Initialize TpttTrainer.
+
+        Args:
+            model (TpttModel): The TPTT model.
+            tokenized_dataset (Dataset, optional): Pre-tokenized dataset.
+            training_args (TrainingArguments, optional): Training arguments.
+            initial_weight (float): Initial MaG weight.
+            final_weight (float): Final MaG weight.
+            transition_step (int): Transition step for MaG weight.
+        """
         self.model = model
         self.tokenizer = model.tokenizer
 
-        self.dataset = dataset.map(instruction_format_fn)
-        self.tokenized_dataset = self.dataset.map(self.tokenize)
+        if tokenized_dataset is None:
+            raw_dataset = load_dataset("yahma/alpaca-cleaned")["train"].map(
+                instruction_format
+            )
+            self.tokenized_dataset = raw_dataset.map(
+                self.tokenize, batched=True, remove_columns=raw_dataset.column_names
+            )
+        else:
+            self.tokenized_dataset = tokenized_dataset
+
+        self.data_collator = DataCollatorWithPadding(
+            self.tokenizer, padding="longest", return_tensors="pt"
+        )
+
         self.training_args = training_args or TrainingArguments(
             output_dir="./tptt_output",
             per_device_train_batch_size=2,
@@ -156,6 +208,7 @@ class TpttTrainer:
             save_strategy="epoch",
             report_to="tensorboard",
         )
+
         self.liza_callback = AdjustMaGWeightCallback(
             self.model.model,
             initial_weight=initial_weight,
@@ -163,31 +216,72 @@ class TpttTrainer:
             transition_step=transition_step,
         )
 
-    def tokenize(self, sample):
+    def tokenize(self, samples):
+        """
+        Tokenize samples in batch.
+
+        Args:
+            samples (dict): Batch of samples.
+
+        Returns:
+            dict: Tokenized samples with labels.
+        """
         tokens = self.tokenizer(
-            sample["text"], truncation=True, max_length=256, padding="max_length"
+            samples["text"],
+            truncation=True,
+            max_length=256,
+            padding="longest",
+            return_attention_mask=True,
         )
         tokens["labels"] = tokens["input_ids"].copy()
         return tokens
 
-    def train(self):
-        trainer = Trainer(
-            model=self.model.model,
-            args=self.training_args,
-            train_dataset=self.tokenized_dataset,
-            processing_class=self.tokenizer,
-            callbacks=[self.liza_callback],
+    def train(self, trainer=None):
+        """
+        Train the model.
+
+        Args:
+            trainer (Trainer, optional): Custom trainer instance.
+        """
+        trainer = (
+            Trainer(
+                model=self.model.model,
+                args=self.training_args,
+                train_dataset=self.tokenized_dataset,
+                data_collator=self.data_collator,
+                callbacks=[self.liza_callback],
+                tokenizer=self.tokenizer,
+            )
+            if trainer is None
+            else trainer
         )
         trainer.train()
 
 
-# 4. PIPELINE
 class TpttPipeline(Pipeline):
+    """Pipeline for TPTT model inference."""
+
     def __init__(self, model: TpttModel):
+        """
+        Initialize TpttPipeline.
+
+        Args:
+            model (TpttModel): The TPTT model.
+        """
         super().__init__(model=model.model, tokenizer=model.tokenizer)
         self.model_wrapper = model
 
     def __call__(self, prompt, **kwargs):
+        """
+        Generate output from the model given a prompt.
+
+        Args:
+            prompt (str): Input prompt.
+            **kwargs: Additional generation arguments.
+
+        Returns:
+            str: Generated text.
+        """
         inputs = self.tokenizer(prompt, return_tensors="pt")
         with torch.no_grad():
             output = self.model.generate(

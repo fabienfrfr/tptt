@@ -31,7 +31,7 @@ def apply_attention_mask(attention_mask, v):
             i for i in range(1, attention_mask.dim()) if attention_mask.shape[i] == 1
         )
     )
-    # mask is [batch, seq] --> Broadcast to v
+    # handle left padding : mask is [batch, seq] --> Broadcast to v
     mask = mask[:, -v.shape[-2] :][(...,) + (None,) * (v.dim() - 2)]
     return v * mask
 

@@ -10,6 +10,7 @@ from .utils import Cache, extract_layer_idx
 def inject_linear_attention(  # pylint: disable=too-many-arguments, too-many-positional-arguments
     model: nn.Module,
     config: PretrainedConfig,  # ou LlamaConfig, MistralConfig, etc.
+    liza_attention: LiZAttention,
     target_modules: list,
     cache: Cache = None,
     operator_mode: str = "delta_rule",
@@ -29,7 +30,7 @@ def inject_linear_attention(  # pylint: disable=too-many-arguments, too-many-pos
             setattr(
                 parent,
                 last,
-                LiZAttention(
+                liza_attention(
                     getattr(parent, last),
                     layer_idx=layer_idx,
                     config=config,

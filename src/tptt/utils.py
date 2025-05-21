@@ -1,3 +1,5 @@
+"""Utility classes and functions for TPTT models (cache management, formatting, etc.)."""
+
 # mypy: ignore-errors
 from __future__ import annotations
 
@@ -14,14 +16,20 @@ class Cache:
     """
 
     def __init__(self, max_length: Optional[int] = None):
+        """
+        Initialize the cache.
+
+        Args:
+            max_length (Optional[int]): Maximum number of tokens to keep per layer (if set).
+        """
         self.states: List[Dict[str, torch.Tensor]] = []
         self.seen_tokens = 0
-        self.max_length = (
-            max_length  # Maximum number of tokens to keep per layer (if set)
-        )
+        self.max_length = max_length
 
     def __getitem__(self, layer_idx: int) -> Optional[Dict[str, torch.Tensor]]:
-        # Retrieve the state for the given layer index, if it exists
+        """
+        Retrieve the state for the given layer index, if it exists.
+        """
         if layer_idx < len(self.states):
             return self.states[layer_idx]
         return None
@@ -45,14 +53,23 @@ class Cache:
                 self.states[layer_idx][key] = value
 
     def reset(self):
+        """
+        Reset the cache and token counter.
+        """
         self.states.clear()
         self.seen_tokens = 0
 
     def get_max_length(self):
+        """
+        Return the maximum length for the cache.
+        """
         return self.max_length
 
 
 def extract_layer_idx(module_name: str) -> int:
+    """
+    Extract the layer index from a module name string.
+    """
     match = re.search(r"\.(\d+)\.", module_name)
     if match:
         return int(match.group(1))
@@ -60,8 +77,13 @@ def extract_layer_idx(module_name: str) -> int:
 
 
 def instruction_format(sample):
+    """
+    Format a sample dictionary into a single prompt string.
+    """
     return {
-        "text": f"### Instruction:\n{sample['instruction']}\n"
-        + "\n### Input:\n{sample['input']}\n"
-        + "\n### Response:\n{sample['output']}"
+        "text": (
+            f"### Instruction:\n{sample['instruction']}\n"
+            f"\n### Input:\n{sample['input']}\n"
+            f"\n### Response:\n{sample['output']}"
+        )
     }
