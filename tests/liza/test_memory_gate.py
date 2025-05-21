@@ -1,5 +1,6 @@
 # pylint: disable=redefined-outer-name
 """Tests for LiZAttention projection sharing."""
+import pytest
 import torch
 
 

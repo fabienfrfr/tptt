@@ -9,7 +9,7 @@ from torch import nn
 
 from ..utils import Cache
 from .mapping_func import get_attention_operator
-from .utils import repeat_kv
+from .utils import apply_attention_mask, repeat_kv, split_qkv
 
 
 class LiZAttention(nn.Module):
@@ -66,21 +66,6 @@ class LiZAttention(nn.Module):
         )
         return num_heads, head_dim, num_key_value_heads, num_key_value_groups
 
-    def split_qkv(self, qkv):
-        """Split the QKV tensor into separate Q, K, and V tensors."""
-        base_attn = self.base_attn
-        num_q_heads = getattr(base_attn, "num_q_heads", None)
-        num_k_heads = getattr(base_attn, "num_k_heads", None)
-        num_v_heads = getattr(base_attn, "num_v_heads", None)
-        head_dim = getattr(base_attn, "head_dim", None)
-
-        q_len = num_q_heads * head_dim
-        k_len = num_k_heads * head_dim
-        v_len = num_v_heads * head_dim
-
-        q, k, v = torch.split(qkv, [q_len, k_len, v_len], dim=-1)
-        return q, k, v
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -98,7 +83,7 @@ class LiZAttention(nn.Module):
         elif hasattr(base_attn, "qkv_proj"):
             # OpenELM and GPT-Neo style : QKV fused, split on the last dimension
             qkv = base_attn.qkv_proj(hidden_states)
-            q, k, v = self.split_qkv(qkv)
+            q, k, v = split_qkv(base_attn, qkv)
             out_proj = base_attn.out_proj
         elif hasattr(base_attn, "c_attn") and hasattr(base_attn, "c_proj"):
             # GPT-2 style
@@ -110,8 +95,9 @@ class LiZAttention(nn.Module):
 
         g = self.pool_g(k)
 
+        # attention_mask: [batch, seq], v: [batch, seq, ...]
         if attention_mask is not None:
-            v = torch.mul(v, attention_mask[:, -v.shape[-2] :, None])
+            v = apply_attention_mask(attention_mask, v)
 
         # 4. Reshape for multi-head
         q = rearrange(q, "b n (h d) -> b h n d", h=self.num_heads)

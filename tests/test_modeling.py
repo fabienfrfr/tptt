@@ -1,8 +1,8 @@
-import torch
-
 from unittest.mock import patch
 
-from src.tptt.modeling_tptt import TpttModel, TpttTrainer, TpttPipeline
+import torch
+
+from src.tptt.modeling_tptt import TpttModel, TpttPipeline, TpttTrainer
 
 
 def test_tptt_config_default_values(dummy_tptt_config):

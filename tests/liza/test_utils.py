@@ -1,8 +1,10 @@
 """Unit tests for tptt.utils utility functions."""
 
+import pytest
 import torch
 
-from src.tptt.liza.utils import get_valid_chunk_size, match_dim, repeat_kv
+from src.tptt.liza.utils import (apply_attention_mask, get_valid_chunk_size,
+                                 match_dim, repeat_kv)
 
 
 def test_repeat_kv():
@@ -10,6 +12,29 @@ def test_repeat_kv():
     x = torch.randn(2, 4, 8, 64)
     repeated = repeat_kv(x, 2)
     assert repeated.shape == (2, 8, 8, 64)
+
+
+@pytest.mark.parametrize(
+    "mask_shape,v_shape",
+    [
+        ((2, 4), (2, 4, 8)),  # standard
+        ((2, 1, 4), (2, 4, 8)),  # singleton after batch
+        ((2, 4, 1), (2, 4, 8)),  # singleton at end
+        ((2, 1, 1, 4), (2, 4, 8)),  # multiple singleton
+        ((1, 4), (1, 4, 8)),  # batch=1
+        ((1, 1, 4), (1, 4, 8)),  # batch=1, singleton
+        ((1, 4, 1), (1, 4, 8)),  # batch=1, singleton at end
+    ],
+)
+def test_apply_attention_mask(mask_shape, v_shape):
+    attention_mask = torch.ones(mask_shape)
+    v = torch.randn(v_shape)
+    # Set some mask positions to zero for test
+    attention_mask[..., 0] = 0
+
+    v_masked = apply_attention_mask(attention_mask, v.clone())
+    # The first token in every sequence should be zeroed
+    assert v_masked.shape == v.shape
 
 
 def test_match_dim_expand():
