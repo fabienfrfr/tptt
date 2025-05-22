@@ -24,7 +24,6 @@ class LiZAttention(nn.Module):
         operator_mode: str = "delta_rule",
         mag_weight: float = 0.5,
         max_chunk_size: int = 64,
-        use_rotary: bool = False,
     ):
         super().__init__()
         self.base_attn = base_attn
@@ -32,7 +31,6 @@ class LiZAttention(nn.Module):
         self.layer_idx = layer_idx
         self.mag_weight = mag_weight
         self.max_chunk_size = max_chunk_size
-        self.use_rotary = use_rotary
         self.cache = cache or Cache(max_length=getattr(config, "max_length", 2048))
 
         (
@@ -66,14 +64,8 @@ class LiZAttention(nn.Module):
         )
         return num_heads, head_dim, num_key_value_heads, num_key_value_groups
 
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
-        **kwargs,
-    ):
+    def apply_projections(self, hidden_states):
         base_attn = self.base_attn
-        # 1. Dynamic retrieval of projections
         if hasattr(base_attn, "q_proj"):
             # LLama, OLMO and Mistral style
             q = base_attn.q_proj(hidden_states)
@@ -92,15 +84,25 @@ class LiZAttention(nn.Module):
             out_proj = base_attn.c_proj
         else:
             raise ValueError("Unsupported attention module: cannot find projections.")
+        return q, k, v, out_proj
 
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        **kwargs,
+    ):
+
+        # Apply projections to hidden states
+        q, k, v, out_proj = self.apply_projections(hidden_states)
         g = self.pool_g(k)
 
-        # 2. Manage attention mask (with padding)
+        # Manage attention mask (with padding)
         if attention_mask is not None:
             # attention_mask -> [batch, seq], v: [batch, seq, ...]
             v = apply_attention_mask(attention_mask, v)
 
-        # 4. Reshape for multi-head
+        # Reshape for multi-head
         q = rearrange(q, "b n (h d) -> b h n d", h=self.num_heads)
         k = rearrange(k, "b n (h d) -> b h n d", h=self.num_key_value_heads)
         v = rearrange(v, "b n (h d) -> b h n d", h=self.num_key_value_heads)
@@ -119,11 +121,6 @@ class LiZAttention(nn.Module):
 
         q, k, v, g = (x.to(torch.float32).contiguous() for x in (q, k, v, g))
         batch_size, num_heads, seq_len, head_dim = q.shape
-
-        if self.use_rotary:
-            print(
-                "[LinearAttention] Applying rotary embedding (not implemented in this snippet)"
-            )
 
         # Retrieve recurrent state from cache
         last_state = self.cache[self.layer_idx]
@@ -149,10 +146,11 @@ class LiZAttention(nn.Module):
         # Save recurrent state
         self.cache.update(self.layer_idx, recurrent_state=recurrent_state)
 
-        # Standard attention
+        # Standard attention (mask and rotation is applied inside)
         o_base, attn_weights = self.base_attn(
             hidden_states, attention_mask=attention_mask, **kwargs
         )
 
+        # Apply Memory as Gate in self-attention
         out = self.mag_weight * o_lin + (1 - self.mag_weight) * o_base
         return out, attn_weights
