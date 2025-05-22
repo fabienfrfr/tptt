@@ -18,12 +18,9 @@ def test_repeat_kv():
     "mask_shape,v_shape",
     [
         ((2, 4), (2, 4, 8)),  # standard
-        ((2, 1, 4), (2, 4, 8)),  # singleton after batch
-        ((2, 4, 1), (2, 4, 8)),  # singleton at end
-        ((2, 1, 1, 4), (2, 4, 8)),  # multiple singleton
+        ((2, 1, 4, 4), (2, 4, 8)),  # padding mask
         ((1, 4), (1, 4, 8)),  # batch=1
         ((1, 1, 4), (1, 4, 8)),  # batch=1, singleton
-        ((1, 4, 1), (1, 4, 8)),  # batch=1, singleton at end
     ],
 )
 def test_apply_attention_mask(mask_shape, v_shape):

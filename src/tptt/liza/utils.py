@@ -25,15 +25,20 @@ def split_qkv(base_attn, qkv):
 
 
 def apply_attention_mask(attention_mask, v):
-    print(f"attention_mask.shape: {attention_mask.shape}")
-    print(f"v.shape: {v.shape}")
-    # Squeeze all singleton dims except batch (dim=0)
-    mask = attention_mask.squeeze(
-        dim=tuple(
-            i for i in range(1, attention_mask.dim()) if attention_mask.shape[i] == 1
+    # extract (if) padding mask
+    if attention_mask.dim() == 4 and attention_mask.shape[1] == 1:
+        # [batch, 1, seq, seq] -> [batch, seq]
+        mask = attention_mask.diagonal(dim1=-2, dim2=-1).squeeze(1)
+    else:
+        # Squeeze all singleton dims except batch (dim=0)
+        mask = attention_mask.squeeze(
+            dim=tuple(
+                i
+                for i in range(1, attention_mask.dim())
+                if attention_mask.shape[i] == 1
+            )
         )
-    )
-    # handle left padding : mask is [batch, seq] --> Broadcast to v
+    # handle left padding : mask is [batch, seq] --> Broadcast to v [batch, seq, (...)]
     mask = mask[:, -v.shape[-2] :][(...,) + (None,) * (v.dim() - 2)]
     return v * mask
 

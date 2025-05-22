@@ -3,16 +3,9 @@
 import torch
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    DataCollatorWithPadding,
-    Pipeline,
-    PretrainedConfig,
-    PreTrainedModel,
-    Trainer,
-    TrainingArguments,
-)
+from transformers import (AutoModelForCausalLM, AutoTokenizer,
+                          DataCollatorWithPadding, Pipeline, PretrainedConfig,
+                          PreTrainedModel, Trainer, TrainingArguments)
 
 from .injection import inject_linear_attention
 from .liza.memory_gate import LiZAttention
@@ -192,8 +185,10 @@ class TpttTrainer:
         self.tokenizer = model.tokenizer
 
         if tokenized_dataset is None:
-            raw_dataset = load_dataset("yahma/alpaca-cleaned")["train"].map(
-                instruction_format
+            raw_dataset = (
+                load_dataset("yahma/alpaca-cleaned")["train"]
+                .select(range(1000))
+                .map(instruction_format)
             )
             self.tokenized_dataset = raw_dataset.map(
                 self.tokenize, batched=True, remove_columns=raw_dataset.column_names

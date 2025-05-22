@@ -72,7 +72,6 @@ class LiZAttention(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         **kwargs,
     ):
-        print(f"hidden_states.shape: {hidden_states.shape}")
         base_attn = self.base_attn
         # 1. Dynamic retrieval of projections
         if hasattr(base_attn, "q_proj"):
@@ -96,9 +95,9 @@ class LiZAttention(nn.Module):
 
         g = self.pool_g(k)
 
-        # 2. Manage attention mask (not needed if HuggingFace style)
-        if attention_mask is not None and 1 < attention_mask.dim() < 4:
-            # attention_mask: [batch, seq], v: [batch, seq, ...]
+        # 2. Manage attention mask (with padding)
+        if attention_mask is not None:
+            # attention_mask -> [batch, seq], v: [batch, seq, ...]
             v = apply_attention_mask(attention_mask, v)
 
         # 4. Reshape for multi-head
