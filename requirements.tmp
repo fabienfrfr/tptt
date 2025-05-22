@@ -48,13 +48,13 @@ pyyaml==6.0.2
 regex==2024.11.6 
 requests==2.32.3 
 safetensors==0.5.3 
-setuptools==80.7.1 
+setuptools==80.8.0 
 six==1.17.0 
 sympy==1.13.1 
 tokenizers==0.21.1 
 torch==2.6.0 
 tqdm==4.67.1 
-transformers==4.51.3 
+transformers==4.49.0 
 triton==3.2.0 
 typing-extensions==4.13.2 
 tzdata==2025.2 
