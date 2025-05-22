@@ -70,6 +70,7 @@ class TpttModel(PreTrainedModel):
         self.model = AutoModelForCausalLM.from_pretrained(
             config.base_model_name,
             trust_remote_code=True,
+            attn_implementation="eager",  # compatible with Liza
         )
         self.tokenizer = AutoTokenizer.from_pretrained(
             config.base_tokenizer_name, trust_remote_code=True
