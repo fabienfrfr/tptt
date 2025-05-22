@@ -1,6 +1,6 @@
 """Linear Attention module for LiZA."""
 
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -90,6 +90,8 @@ class LiZAttention(nn.Module):
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
+        past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        output_attentions: Optional[bool] = False,
         **kwargs,
     ):
 
@@ -153,4 +155,15 @@ class LiZAttention(nn.Module):
 
         # Apply Memory as Gate in self-attention
         out = self.mag_weight * o_lin + (1 - self.mag_weight) * o_base
-        return out, attn_weights
+
+        # Return output following transformer convention
+        if hasattr(self.base_attn, "o_proj") or hasattr(self.base_attn, "out_proj"):
+            # Llama/Mistral/OpenELM
+            if output_attentions:
+                return out, attn_weights, past_key_value
+            return out, past_key_value
+        else:
+            # GPT-2
+            if output_attentions:
+                return out, attn_weights
+            return out
