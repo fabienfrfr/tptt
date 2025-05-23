@@ -147,11 +147,13 @@ class TpttModel(PreTrainedModel):
         self.backbone = get_peft_model(self.backbone, lora_config)
         self.backbone.print_trainable_parameters()
 
-    def forward(self, *args, **kwargs):
+    def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
         """
         Forward pass. All arguments are passed to the underlying base model.
         """
-        return self.backbone(*args, **kwargs)
+        return self.backbone(
+            input_ids=input_ids, attention_mask=attention_mask, labels=labels, **kwargs
+        )
 
     def save_pretrained(self, path: str, **kwargs):
         """
