@@ -4,8 +4,12 @@ from typing import List, Optional
 
 import torch
 from peft import LoraConfig, get_peft_model
-from transformers import (AutoModelForCausalLM, Pipeline, PretrainedConfig,
-                          PreTrainedModel)
+from transformers import (
+    AutoModelForCausalLM,
+    Pipeline,
+    PretrainedConfig,
+    PreTrainedModel,
+)
 
 from .injection import inject_linear_attention
 from .liza.memory_gate import LiZAttention
@@ -29,6 +33,7 @@ class TpttConfig(PretrainedConfig):
         attn_ratio: float = 0.5,
         mag_weight: float = 0.5,
         max_chunk_size: int = 64,
+        inject_liza: bool = True,
         **kwargs,
     ):
         """
@@ -56,6 +61,7 @@ class TpttConfig(PretrainedConfig):
         self.attn_ratio = attn_ratio
         self.mag_weight = mag_weight
         self.max_chunk_size = max_chunk_size
+        self.inject_liza = inject_liza
 
 
 class TpttModel(PreTrainedModel):
@@ -78,14 +84,18 @@ class TpttModel(PreTrainedModel):
         self.backbone = AutoModelForCausalLM.from_pretrained(
             config.base_model_name,
             trust_remote_code=True,
-            attn_implementation="eager",  # For LiZA compatibility
+            attn_implementation="eager",  # For LiZA/LoRA compatibility
         )
-        # Cache object for attention modules (if needed)
-        self.cache = Cache()
         # Inject custom linear attention modules (LiZA)
-        self._inject_liza_attention()
+        if config.inject_liza:
+            # Cache object for attention modules (if needed)
+            self.cache = Cache()
+            self.inject_liza_attention()
+        else:
+            self.cache = None
+            print("LiZAttention injection is not enabled.")
 
-    def _inject_liza_attention(self):
+    def inject_liza_attention(self):
         """
         Inject LiZAttention into the specified target modules of the base model.
         """
