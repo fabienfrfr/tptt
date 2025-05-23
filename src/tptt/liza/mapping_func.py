@@ -41,59 +41,77 @@ class AttentionOperator(nn.Module):
     def chunk_delta_rule_forward(
         query, key, value, beta, chunk_size, initial_state=None
     ):
-        """Chunkwise delta rule attention computation."""
+        """
+        query, key, value, beta: [batch, num_heads, seq_len, head_dim]
+        chunk_size: int
+        initial_state: [batch, num_heads, head_dim, head_dim] or None
+        """
         batch_size, num_heads, seq_len, head_dim = query.shape
-        total_length = batch_size * num_heads * seq_len
+        chunk_size = get_valid_chunk_size(seq_len, chunk_size)
+        num_chunks = seq_len // chunk_size
 
-        # Flatten for operator: [batch_size * num_heads * seq_len, head_dim]
-        q_lin = query.reshape(total_length, head_dim)
-        k_lin = key.reshape(total_length, head_dim)
-        v_lin = value.reshape(total_length, head_dim)
-        g_lin = beta.reshape(total_length, head_dim)
-
-        # Update with Validate chunk size
-        chunk_size = get_valid_chunk_size(total_length, chunk_size)
-        num_chunks = total_length // chunk_size
-
-        # Reshaping for chunk
-        query = q_lin.reshape(num_chunks, chunk_size, head_dim)
-        key = k_lin.reshape(num_chunks, chunk_size, head_dim)
-        value = v_lin.reshape(num_chunks, chunk_size, head_dim)
-        beta = g_lin.reshape(num_chunks, chunk_size, head_dim)
-
-        key_beta = key * beta
-        value_beta = value * beta
-
-        output = torch.empty_like(value)
-        # initialize the state
-        state = (
-            initial_state
-            if initial_state is not None
-            else torch.zeros(head_dim, head_dim, device=query.device, dtype=query.dtype)
+        # Reshape for chunking: [batch, num_heads, num_chunks, chunk_size, head_dim]
+        q_chunks = query.reshape(
+            batch_size, num_heads, num_chunks, chunk_size, head_dim
+        )
+        k_chunks = key.reshape(batch_size, num_heads, num_chunks, chunk_size, head_dim)
+        v_chunks = value.reshape(
+            batch_size, num_heads, num_chunks, chunk_size, head_dim
+        )
+        beta_chunks = beta.reshape(
+            batch_size, num_heads, num_chunks, chunk_size, head_dim
         )
 
-        def process_chunk(query_i, key_i, key_beta_i, value_beta_i, state):
-            """Process a single chunk with closed form delta rule"""
-            t_matrix = -(key_beta_i @ key_i.t()).tril(-1)
-            t_matrix = t_matrix + torch.eye(
-                chunk_size, device=query.device, dtype=query.dtype
+        # Output buffer
+        output = torch.empty_like(q_chunks)
+        # State: [batch, num_heads, head_dim, head_dim]
+        if initial_state is not None:
+            state = initial_state
+        else:
+            state = torch.zeros(
+                batch_size,
+                num_heads,
+                head_dim,
+                head_dim,
+                device=query.device,
+                dtype=query.dtype,
             )
-            w_matrix = t_matrix @ key_beta_i
-            u_matrix = t_matrix @ value_beta_i
-            u_i = u_matrix - w_matrix @ state
-            o_inter = query_i @ state
-            a_i = (query_i @ key_i.t()).tril()
-            o_intra = a_i @ u_i
-            state = state + key_i.t() @ u_i
-            return o_intra + o_inter, state
 
-        for i in range(num_chunks):
-            # Process a all chunk with recurrent form delta rule
-            chunk_out, state = process_chunk(
-                query[i], key[i], key_beta[i], value_beta[i], state
-            )
-            output[i] = chunk_out
-        return output.reshape(total_length, head_dim), state.reshape(head_dim, head_dim)
+        def process_chunk(q, k, v, b, state):
+            """
+            q, k, v, b: [batch, num_heads, chunk_size, head_dim]
+            state: [batch, num_heads, head_dim, head_dim]
+            Returns: (output_chunk, new_state)
+            """
+            k_beta = k * b
+            v_beta = v * b
+
+            # [batch, num_heads, chunk_size, head_dim] @ [batch, num_heads, head_dim, chunk_size]
+            t_matrix = -(k_beta @ k.transpose(-2, -1)).tril(-1)
+            t_matrix = t_matrix + torch.eye(
+                q.shape[-2], device=q.device, dtype=q.dtype
+            ).unsqueeze(0).unsqueeze(0)
+            w_matrix = t_matrix @ k_beta
+            u_matrix = t_matrix @ v_beta
+            u_i = u_matrix - torch.matmul(w_matrix, state)
+            o_inter = torch.matmul(q, state)
+            a_i = (q @ k.transpose(-2, -1)).tril()
+            o_intra = torch.matmul(a_i, u_i)
+            new_state = state + torch.matmul(k.transpose(-2, -1), u_i)
+            return o_intra + o_inter, new_state
+
+        for chunk_idx in range(num_chunks):
+            q = q_chunks[:, :, chunk_idx]
+            k = k_chunks[:, :, chunk_idx]
+            v = v_chunks[:, :, chunk_idx]
+            b = beta_chunks[:, :, chunk_idx]
+
+            chunk_out, state = process_chunk(q, k, v, b, state)
+            output[:, :, chunk_idx] = chunk_out
+
+        # Reshape back to [batch, num_heads, seq_len, head_dim]
+        output = output.reshape(batch_size, num_heads, seq_len, head_dim)
+        return output, state
 
     @staticmethod
     def gla_forward(q, k, v, beta, scale, initial_state=None):

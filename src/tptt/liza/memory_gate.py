@@ -141,7 +141,6 @@ class LiZAttention(nn.Module):
             chunk_size=self.max_chunk_size,
             recurrent_state=recurrent_state,
         )
-        o_lin = o_lin.reshape(batch_size, num_heads, seq_len, head_dim)
         o_lin = rearrange(o_lin, "b h n d -> b n (h d)")
         o_lin = out_proj(o_lin)
 
