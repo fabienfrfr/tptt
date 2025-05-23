@@ -74,16 +74,3 @@ def extract_layer_idx(module_name: str) -> int:
     if match:
         return int(match.group(1))
     return -1
-
-
-def instruction_format(sample):
-    """
-    Format a sample dictionary into a single prompt string.
-    """
-    return {
-        "text": (
-            f"### Instruction:\n{sample['instruction']}\n"
-            f"\n### Input:\n{sample['input']}\n"
-            f"\n### Response:\n{sample['output']}"
-        )
-    }

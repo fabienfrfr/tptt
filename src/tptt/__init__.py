@@ -1,7 +1,7 @@
 from .injection import inject_linear_attention
 from .modeling_tptt import TpttConfig, TpttModel, TpttPipeline
 from .tuner import AdjustMaGWeightCallback
-from .utils import Cache, instruction_format
+from .utils import Cache
 
 __all__ = [
     "TpttConfig",
@@ -9,6 +9,5 @@ __all__ = [
     "TpttPipeline",
     "inject_linear_attention",
     "AdjustMaGWeightCallback",
-    "instruction_format",
     "Cache",
 ]

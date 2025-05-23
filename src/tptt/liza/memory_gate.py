@@ -92,6 +92,7 @@ class LiZAttention(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         output_attentions: Optional[bool] = False,
+        use_cache: Optional[bool] = False,
         **kwargs,
     ):
 
@@ -122,15 +123,17 @@ class LiZAttention(nn.Module):
         g = F.logsigmoid(g) / gate_logit_normalizer
 
         q, k, v, g = (x.to(torch.float32).contiguous() for x in (q, k, v, g))
-        batch_size, num_heads, seq_len, head_dim = q.shape
 
-        # Retrieve recurrent state from cache
-        last_state = self.cache[self.layer_idx]
-        recurrent_state = (
-            last_state["recurrent_state"]
-            if last_state is not None and "recurrent_state" in last_state
-            else None
-        )
+        # Retrieve recurrent state from cache (inference only)
+        if use_cache:
+            last_state = self.cache[self.layer_idx]
+            recurrent_state = (
+                last_state["recurrent_state"]
+                if last_state is not None and "recurrent_state" in last_state
+                else None
+            )
+        else:
+            recurrent_state = None
 
         # Linear attention
         o_lin, recurrent_state = self.operator(
@@ -145,7 +148,8 @@ class LiZAttention(nn.Module):
         o_lin = out_proj(o_lin)
 
         # Save recurrent state
-        self.cache.update(self.layer_idx, recurrent_state=recurrent_state)
+        if use_cache:
+            self.cache.update(self.layer_idx, recurrent_state=recurrent_state)
 
         # Standard attention (mask and rotation is applied inside)
         o_base, attn_weights = self.base_attn(
