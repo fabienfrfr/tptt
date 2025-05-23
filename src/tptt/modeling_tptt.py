@@ -26,6 +26,7 @@ class TpttConfig(PretrainedConfig):
         base_tokenizer_name: Optional[str] = None,
         target_modules_names: Optional[List[str]] = None,
         operator_mode: str = "delta_rule",
+        attn_ratio: float = 0.5,
         mag_weight: float = 0.5,
         max_chunk_size: int = 64,
         **kwargs,
@@ -52,6 +53,7 @@ class TpttConfig(PretrainedConfig):
         self.base_tokenizer_name = base_tokenizer_name
         self.target_modules_names = target_modules_names
         self.operator_mode = operator_mode
+        self.attn_ratio = attn_ratio
         self.mag_weight = mag_weight
         self.max_chunk_size = max_chunk_size
 

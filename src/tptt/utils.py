@@ -39,18 +39,22 @@ class Cache:
         Update the cache for a given layer.
         If max_length is set, keep only the last max_length tokens in any sequence state.
         """
-        if len(self.states) <= layer_idx:
-            self.states.append(kwargs)
-        else:
-            for key, value in kwargs.items():
+        detached_kwargs = {}
+        for key, value in kwargs.items():
+            if isinstance(value, torch.Tensor):
+                value = value.detach()
                 # Apply sliding window if needed
                 if (
                     self.max_length is not None
-                    and isinstance(value, torch.Tensor)
                     and value.dim() > 1  # assume [batch, seq_len, ...]
                 ):
                     value = value[:, -self.max_length :].contiguous()
-                self.states[layer_idx][key] = value
+            detached_kwargs[key] = value
+
+        if len(self.states) <= layer_idx:
+            self.states.append(detached_kwargs)
+        else:
+            self.states[layer_idx].update(detached_kwargs)
 
     def reset(self):
         """

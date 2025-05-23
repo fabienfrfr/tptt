@@ -31,6 +31,7 @@ class LiZAttention(nn.Module):
         self.layer_idx = layer_idx
         self.mag_weight = mag_weight
         self.max_chunk_size = max_chunk_size
+        self.attn_ratio = getattr(config, "attn_ratio", 0.5)
         self.cache = cache or Cache(max_length=getattr(config, "max_length", 2048))
 
         (
@@ -125,7 +126,7 @@ class LiZAttention(nn.Module):
         q, k, v, g = (x.to(torch.float32).contiguous() for x in (q, k, v, g))
 
         # Retrieve recurrent state from cache (inference only)
-        if use_cache:
+        if use_cache and self.training is False:
             last_state = self.cache[self.layer_idx]
             recurrent_state = (
                 last_state["recurrent_state"]
@@ -148,10 +149,15 @@ class LiZAttention(nn.Module):
         o_lin = out_proj(o_lin)
 
         # Save recurrent state
-        if use_cache:
+        if use_cache and self.training is False:
             self.cache.update(self.layer_idx, recurrent_state=recurrent_state)
 
         # Standard attention (mask and rotation is applied inside)
+        """
+        add here attn_ratio
+        (if seq_len > attn_ratio * max_seq_len : 
+            mask[-attn_ratio * max_seq_len:]== 0 (before seq) 
+        """
         o_base, attn_weights = self.base_attn(
             hidden_states, attention_mask=attention_mask, **kwargs
         )
