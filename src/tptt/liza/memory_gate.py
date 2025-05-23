@@ -91,12 +91,11 @@ class LiZAttention(nn.Module):
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
-        past_key_value: Optional[Tuple[torch.Tensor]] = None,
-        output_attentions: Optional[bool] = False,
-        use_cache: Optional[bool] = False,
         **kwargs,
     ):
-
+        # Get values from kwargs
+        output_attentions = kwargs.get("output_attentions", False)
+        past_key_value = kwargs.get("past_key_value", None)
         # Apply projections to hidden states
         q, k, v, out_proj = self.apply_projections(hidden_states)
         g = self.pool_g(k)
@@ -126,7 +125,7 @@ class LiZAttention(nn.Module):
         q, k, v, g = (x.to(torch.float32).contiguous() for x in (q, k, v, g))
 
         # Retrieve recurrent state from cache (inference only)
-        if use_cache and self.training is False:
+        if self.training is False:
             last_state = self.cache[self.layer_idx]
             recurrent_state = (
                 last_state["recurrent_state"]
@@ -149,7 +148,7 @@ class LiZAttention(nn.Module):
         o_lin = out_proj(o_lin)
 
         # Save recurrent state
-        if use_cache and self.training is False:
+        if self.training is False:
             self.cache.update(self.layer_idx, recurrent_state=recurrent_state)
 
         # Standard attention (mask and rotation is applied inside)
