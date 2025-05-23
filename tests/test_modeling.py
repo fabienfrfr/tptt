@@ -16,21 +16,17 @@ def test_tptt_config_default_values(dummy_tptt_config):
 
 
 @patch("src.tptt.modeling_tptt.AutoModelForCausalLM.from_pretrained")
-@patch("src.tptt.modeling_tptt.AutoTokenizer.from_pretrained")
 @patch("src.tptt.injection.inject_linear_attention")
 def test_tpttmodel_init(
     mock_inject,
-    mock_tokenizer,
     mock_model,
     dummy_model,
-    dummy_tokenizer,
     cache,
     dummy_tptt_config,
 ):
     """Test TpttModel initialization with mocked dependencies."""
     # Arrange: set up return values for the mocks
     mock_model.return_value = dummy_model
-    mock_tokenizer.return_value = dummy_tokenizer
     mock_inject.return_value = (dummy_model, cache)
 
     # Act: instantiate the TpttModel
@@ -38,5 +34,4 @@ def test_tpttmodel_init(
 
     # Assert
     assert tptt.config == dummy_tptt_config
-    assert tptt.model is dummy_model
-    assert tptt.tokenizer == dummy_tokenizer
+    assert tptt.backbone is dummy_model
