@@ -83,6 +83,12 @@ class AttentionOperator(nn.Module):
             state: [batch, num_heads, head_dim, head_dim]
             Returns: (output_chunk, new_state)
             """
+            # Clamp to avoid numerical instabilities
+            k = torch.clamp(k, min=-1e4, max=1e4)
+            v = torch.clamp(v, min=-1e4, max=1e4)
+            b = torch.clamp(b, min=1e-6, max=1e4)
+            q = torch.clamp(q, min=-1e4, max=1e4)
+
             k_beta = k * b
             v_beta = v * b
 

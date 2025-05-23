@@ -116,11 +116,12 @@ class LiZAttention(nn.Module):
         v = repeat_kv(v, self.num_key_value_groups)
         g = repeat_kv(g, self.num_key_value_groups)
 
-        q = F.softmax(q, dim=-1)
-        k = F.softmax(k, dim=-1)
+        q = torch.clamp(F.softmax(q, dim=-1), min=1e-6, max=1 - 1e-6)
+        k = torch.clamp(F.softmax(k, dim=-1), min=1e-6, max=1 - 1e-6)
 
         gate_logit_normalizer = 16
         g = F.logsigmoid(g) / gate_logit_normalizer
+        g = torch.clamp(g, min=-10, max=10)
 
         q, k, v, g = (x.to(torch.float32).contiguous() for x in (q, k, v, g))
 

@@ -1,6 +1,5 @@
 # pylint: disable=redefined-outer-name
 """Tests for LiZAttention projection sharing."""
-import pytest
 import torch
 
 
@@ -45,3 +44,50 @@ def test_liza_attention_fused_qkv_with_mask(
 
     # Output shape should be (batch, seq_len, tensor_dim)
     assert output.shape == (batch_size, seq_len, tensor_dim)
+
+
+def test_liza_attention_backward_with_mask(
+    liza_attention, random_hidden_tensor, attention_mask
+):
+    """
+    Test backward pass with attention mask.
+    """
+    random_hidden_tensor.requires_grad_(True)
+    output, _ = liza_attention(random_hidden_tensor, attention_mask=attention_mask)
+    loss = output.sum()
+    loss.backward()
+    for name, param in liza_attention.named_parameters():
+        if param.grad is not None:
+            assert not torch.isnan(param.grad).any(), f"NaN in grad for {name}"
+
+
+def test_liza_attention_backward_with_mask_multiple_steps(
+    liza_attention, random_hidden_tensor, attention_mask, n_steps=3
+):
+    """
+    Simulate multiple forward/backward passes with attention mask,
+    in a production-like loop (optimizer, grad reset, train mode, etc.).
+    """
+    liza_attention.train()  # Ensure the module is in training mode
+    optimizer = torch.optim.SGD(liza_attention.parameters(), lr=1e-3)
+
+    for step in range(n_steps):
+        optimizer.zero_grad()  # Reset gradients before each mini-batch
+
+        # Simulate a new batch each step (clone/detach to avoid graph accumulation)
+        input_tensor = random_hidden_tensor.clone().detach().requires_grad_(True)
+
+        # Forward pass
+        output, _ = liza_attention(input_tensor, attention_mask=attention_mask)
+        loss = output.sum()  # Replace with your actual loss function if needed
+
+        # Backward pass
+        loss.backward()
+        optimizer.step()  # Update parameters as in real training
+
+        # Check for NaNs in gradients after each backward
+        for name, param in liza_attention.named_parameters():
+            if param.grad is not None:
+                assert not torch.isnan(
+                    param.grad
+                ).any(), f"NaN in grad for {name} at step {step}"
