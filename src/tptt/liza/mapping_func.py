@@ -42,6 +42,7 @@ class AttentionOperator(nn.Module):
         query, key, value, beta, chunk_size, initial_state=None
     ):
         """
+        Implementation of https://arxiv.org/abs/2406.06484
         query, key, value, beta: [batch, num_heads, seq_len, head_dim]
         chunk_size: int
         initial_state: [batch, num_heads, head_dim, head_dim] or None
@@ -83,27 +84,43 @@ class AttentionOperator(nn.Module):
             state: [batch, num_heads, head_dim, head_dim]
             Returns: (output_chunk, new_state)
             """
-            # Clamp to avoid numerical instabilities
+            # Clamp to avoid numerical instabilities (not in paper)
             k = torch.clamp(k, min=-1e4, max=1e4)
             v = torch.clamp(v, min=-1e4, max=1e4)
             b = torch.clamp(b, min=1e-6, max=1e4)
             q = torch.clamp(q, min=-1e4, max=1e4)
 
+            # Eq. (10): β_t * k_t and β_t * v_t
             k_beta = k * b
             v_beta = v * b
 
-            # [batch, num_heads, chunk_size, head_dim] @ [batch, num_heads, head_dim, chunk_size]
+            # Eq. (11): Lower-triangular matrix T (with -KβK^T off-diagonal, 1 on diagonal)
+            # T = I - tril(KβK^T, -1)
             t_matrix = -(k_beta @ k.transpose(-2, -1)).tril(-1)
             t_matrix = t_matrix + torch.eye(
                 q.shape[-2], device=q.device, dtype=q.dtype
             ).unsqueeze(0).unsqueeze(0)
+
+            # Eq. (11): W = T Kβ, U = T Vβ
             w_matrix = t_matrix @ k_beta
             u_matrix = t_matrix @ v_beta
+
+            # Eq. (12): u_i = U - W S (S = state)
             u_i = u_matrix - torch.matmul(w_matrix, state)
+
+            # Eq. (12): inter-chunk output: q S
             o_inter = torch.matmul(q, state)
+
+            # Eq. (12): intra-chunk attention: tril(q K^T)
             a_i = (q @ k.transpose(-2, -1)).tril()
+
+            # Eq. (12): intra-chunk output: a_i u_i
             o_intra = torch.matmul(a_i, u_i)
+
+            # Eq. (12): state update: S_new = S + K^T u_i
             new_state = state + torch.matmul(k.transpose(-2, -1), u_i)
+
+            # Eq. (12): output = intra + inter
             return o_intra + o_inter, new_state
 
         for chunk_idx in range(num_chunks):

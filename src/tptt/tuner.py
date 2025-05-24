@@ -50,3 +50,12 @@ class AdjustMaGWeightCallback(TrainerCallback):
             for _, module in self.model.named_modules():
                 if isinstance(module, LiZAttention):
                     module.mag_weight = weight
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        mag_weight = None
+        for _, module in self.model.named_modules():
+            if isinstance(module, LiZAttention):
+                mag_weight = getattr(module, "mag_weight", None)
+                break
+        if mag_weight is not None and logs is not None:
+            logs["mag_weight"] = float(mag_weight)
