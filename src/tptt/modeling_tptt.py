@@ -4,8 +4,12 @@ from typing import List, Optional
 
 import torch
 from peft import LoraConfig, get_peft_model
-from transformers import (AutoModelForCausalLM, Pipeline, PretrainedConfig,
-                          PreTrainedModel)
+from transformers import (
+    AutoModelForCausalLM,
+    Pipeline,
+    PretrainedConfig,
+    PreTrainedModel,
+)
 
 from .injection import inject_linear_attention
 from .liza.memory_gate import LiZAttention
@@ -223,9 +227,7 @@ class TpttPipeline(Pipeline):
                 **model_inputs,
                 max_new_tokens=forward_params.get("max_new_tokens", 50),
                 do_sample=forward_params.get("do_sample", False),
-                cache_implementation=forward_params.get(
-                    "cache_implementation", "static"
-                ),
+                # cache_implementation=forward_params.get("cache_implementation", "static"),
             )
         return {"generated_ids": output}
 
