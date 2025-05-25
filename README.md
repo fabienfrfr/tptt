@@ -119,11 +119,11 @@ print(result[0]["generated_text"])
 
 ## Requirements
 
-- Python 3.12+
+- Python 3.11+
 - PyTorch
 - einops
 - Transformers
-- flash-linear-attention
+- flash-linear-attention (optional)
 
 See `requirements.txt` for the full list.
 

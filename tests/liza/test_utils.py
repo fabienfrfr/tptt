@@ -3,8 +3,9 @@
 import pytest
 import torch
 
-from src.tptt.liza.utils import (apply_attention_mask, get_valid_chunk_size,
-                                 match_dim, repeat_kv)
+from src.tptt.liza.utils import (apply_linear_attention_mask,
+                                 get_valid_chunk_size, match_dim, repeat_kv,
+                                 truncate_attention_mask)
 
 
 def test_repeat_kv():
@@ -29,9 +30,40 @@ def test_apply_attention_mask(mask_shape, v_shape):
     # Set some mask positions to zero for test
     attention_mask[..., 0] = 0
 
-    v_masked = apply_attention_mask(attention_mask, v.clone())
+    v_masked = apply_linear_attention_mask(attention_mask, v.clone())
     # The first token in every sequence should be zeroed
     assert v_masked.shape == v.shape
+
+
+@pytest.mark.parametrize(
+    "mask_shape,hidden_shape",
+    [
+        ((2, 4), (2, 4, 8)),  # standard
+        ((2, 1, 4, 4), (2, 4, 8)),  # padding mask (complex)
+        ((1, 4), (1, 4, 8)),  # batch=1
+        ((1, 1, 4), (1, 4, 8)),  # batch=1, singleton
+    ],
+)
+def test_truncate_attention_mask(mask_shape, hidden_shape):
+    max_length = 2
+    hidden_states = torch.randn(hidden_shape)
+    attention_mask = torch.ones(mask_shape)
+
+    hidden_states[..., -max_length:, :] = 42
+    attention_mask[(..., -max_length)] = 0
+
+    truncated_hidden, truncated_mask = truncate_attention_mask(
+        hidden_states, attention_mask, max_length
+    )
+
+    assert truncated_hidden.shape[1] == max_length
+
+    seq_lens = [i for i, s in enumerate(attention_mask.shape) if s == hidden_shape[1]]
+    assert any(truncated_mask.shape[d] == max_length for d in seq_lens)
+
+    assert torch.all(truncated_hidden == 42)
+
+    print(f"Passed for mask_shape={mask_shape}, hidden_shape={hidden_shape}")
 
 
 def test_match_dim_expand():

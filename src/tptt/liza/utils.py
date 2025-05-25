@@ -24,7 +24,7 @@ def split_qkv(base_attn, qkv):
     return q, k, v
 
 
-def apply_attention_mask(attention_mask, v):
+def apply_linear_attention_mask(attention_mask, v):
     # extract (if) padding mask
     if attention_mask.dim() == 4 and attention_mask.shape[1] == 1:
         # [batch, 1, seq, seq] -> [batch, seq]
@@ -41,6 +41,32 @@ def apply_attention_mask(attention_mask, v):
     # handle left padding : mask is [batch, seq] --> Broadcast to v [batch, seq, (...)]
     mask = mask[:, -v.shape[-2] :][(...,) + (None,) * (v.dim() - 2)]
     return v * mask
+
+
+def truncate_attention_mask(hidden_states, attention_mask, max_length):
+    """
+    Truncate hidden_states and attention_mask to the last window of size max_length,
+    matching the sequence dimension of hidden_states.
+    """
+    seq_dim = 1  # convention: (batch, seq, ...)
+    seq_len = hidden_states.shape[seq_dim]
+    if seq_len > max_length:
+        hidden_states = hidden_states.narrow(seq_dim, seq_len - max_length, max_length)
+        if attention_mask is not None:
+            # Find the dimension in attention_mask that matches seq_len
+            for d, s in enumerate(attention_mask.shape):
+                if s == seq_len:
+                    attn_dim = d
+                    break
+            else:
+                raise ValueError(
+                    "No dimension in attention_mask matches sequence length of hidden_states."
+                )
+            # Narrow along that dimension
+            idx = [slice(None)] * attention_mask.dim()
+            idx[attn_dim] = slice(seq_len - max_length, seq_len)
+            attention_mask = attention_mask[tuple(idx)]
+    return hidden_states, attention_mask
 
 
 def get_valid_chunk_size(total_l: int, chunk_size: int) -> int:

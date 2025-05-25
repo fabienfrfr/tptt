@@ -212,7 +212,7 @@ class TpttPipeline(Pipeline):
 
     def preprocess(self, prompt):
         # Tokenize the input prompt
-        return self.tokenizer(prompt, return_tensors="pt")
+        return self.tokenizer(prompt, return_tensors="pt", truncation=False)
 
     def _forward(self, model_inputs, **forward_params):
         # Move tensors to the correct device
@@ -223,6 +223,9 @@ class TpttPipeline(Pipeline):
                 **model_inputs,
                 max_new_tokens=forward_params.get("max_new_tokens", 50),
                 do_sample=forward_params.get("do_sample", False),
+                cache_implementation=forward_params.get(
+                    "cache_implementation", "static"
+                ),
             )
         return {"generated_ids": output}
 

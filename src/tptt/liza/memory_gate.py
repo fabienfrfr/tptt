@@ -9,7 +9,8 @@ from torch import nn
 
 from ..utils import Cache
 from .mapping_func import get_attention_operator
-from .utils import apply_attention_mask, repeat_kv, split_qkv
+from .utils import (apply_linear_attention_mask, repeat_kv, split_qkv,
+                    truncate_attention_mask)
 
 
 class LiZAttention(nn.Module):
@@ -39,6 +40,7 @@ class LiZAttention(nn.Module):
             self.head_dim,
             self.num_key_value_heads,
             self.num_key_value_groups,
+            self.max_attn_length,
         ) = self.get_attention_parameters(base_attn, config)
         self.operator = get_attention_operator(operator_mode)
         self.pool_g = nn.AdaptiveAvgPool1d(
@@ -63,7 +65,19 @@ class LiZAttention(nn.Module):
         num_key_value_groups = getattr(base_attn, "num_key_value_groups", None) or (
             num_heads // num_key_value_heads if num_heads and num_key_value_heads else 1
         )
-        return num_heads, head_dim, num_key_value_heads, num_key_value_groups
+        max_attn_length = (
+            getattr(config, "max_length", None)
+            or getattr(config, "model_max_length", None)
+            or getattr(base_attn, "max_position_embeddings", None)
+            or 2048  # default fallback
+        )
+        return (
+            num_heads,
+            head_dim,
+            num_key_value_heads,
+            num_key_value_groups,
+            max_attn_length,
+        )
 
     def apply_projections(self, hidden_states):
         base_attn = self.base_attn
@@ -103,7 +117,7 @@ class LiZAttention(nn.Module):
         # Manage attention mask (with padding)
         if attention_mask is not None:
             # attention_mask -> [batch, seq], v: [batch, seq, ...]
-            v = apply_attention_mask(attention_mask, v)
+            v = apply_linear_attention_mask(attention_mask, v)
 
         # Reshape for multi-head
         q = rearrange(q, "b n (h d) -> b h n d", h=self.num_heads)
@@ -152,18 +166,18 @@ class LiZAttention(nn.Module):
         if self.training is False:
             self.cache.update(self.layer_idx, recurrent_state=recurrent_state)
 
-        # Standard attention (mask and rotation is applied inside)
-        """
-        add here attn_ratio
-        (if seq_len > attn_ratio * max_seq_len : 
-            mask[-attn_ratio * max_seq_len:]== 0 (before seq) 
-        """
+        # Standard truncated attention (mask and rotation is applied inside)
+        # need : cache_implementation="static"
+        hidden_states, attention_mask = truncate_attention_mask(
+            hidden_states, attention_mask, self.max_attn_length
+        )
         o_base, attn_weights = self.base_attn(
             hidden_states, attention_mask=attention_mask, **kwargs
         )
 
-        # Apply Memory as Gate in self-attention
-        out = self.mag_weight * o_lin + (1 - self.mag_weight) * o_base
+        # Apply Memory as Gate in self-attention (with model_max_length management)
+        left_trunc = min(self.max_attn_length, o_base.shape[-2])
+        out = self.mag_weight * o_lin[:, -left_trunc:] + (1 - self.mag_weight) * o_base
 
         # Return output following transformer convention
         if hasattr(self.base_attn, "o_proj") or hasattr(self.base_attn, "out_proj"):
