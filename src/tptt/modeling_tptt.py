@@ -109,9 +109,14 @@ class TpttModel(PreTrainedModel):
             config.base_model_name,
             trust_remote_code=True,
             attn_implementation="eager",  # For LiZA/LoRA compatibility
-            device_map="auto",
+            # device_map="auto", # make error if using bnb_config
             quantization_config=bnb_config,
         )
+        # Serialize quantization config if it exists
+        if hasattr(self.backbone.config, "quantization_config"):
+            self.backbone.config.quantization_config = (
+                self.backbone.config.quantization_config.to_dict()
+            )
         # Inject custom linear attention modules (LiZA)
         if config.inject_liza:
             # Cache object for attention modules (if needed)
