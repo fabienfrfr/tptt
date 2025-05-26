@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.1.1 (2025-05-26)
+
+### Bug Fixes
+
+- Cache confusion between TPTT and Transformer
+  ([`9683297`](https://github.com/fabienfrfr/LiZA/commit/9683297a13271057d87b67badf8eb9768cb00555))
+
+### Testing
+
+- Fastprint debugging (find method to add log in jupyter)
+  ([`b09803b`](https://github.com/fabienfrfr/LiZA/commit/b09803b8f696ed69c7ade498d9b4205ac07f7dd2))
+
+
 ## v0.1.0 (2025-05-25)
 
 - Initial Release
