@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.1.2 (2025-05-26)
+
+### Bug Fixes
+
+- Complete mag cache gestion
+  ([`cb252b1`](https://github.com/fabienfrfr/LiZA/commit/cb252b163311d390369aa7e23a19f5bf3784ebba))
+
+
 ## v0.1.1 (2025-05-26)
 
 ### Bug Fixes
