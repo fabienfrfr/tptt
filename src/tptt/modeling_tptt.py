@@ -4,12 +4,8 @@ from typing import List, Optional
 
 import torch
 from peft import LoraConfig, get_peft_model
-from transformers import (
-    AutoModelForCausalLM,
-    Pipeline,
-    PretrainedConfig,
-    PreTrainedModel,
-)
+from transformers import (AutoModelForCausalLM, Pipeline, PretrainedConfig,
+                          PreTrainedModel)
 
 from .injection import inject_linear_attention
 from .liza.memory_gate import LiZAttention

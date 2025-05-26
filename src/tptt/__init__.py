@@ -1,3 +1,5 @@
+__version__ = "0.1.0"
+
 from .injection import inject_linear_attention
 from .liza.mapping_func import AttentionOperator
 from .liza.memory_gate import LiZAttention

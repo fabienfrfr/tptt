@@ -21,6 +21,7 @@ clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} +
 
 build:
+	semantic-release version
 	poetry self update
 	poetry export --without-hashes --format=requirements.txt --output=requirements.tmp
 	sed 's/;.*//' requirements.tmp | grep -v '^[[:space:]]*$$' > requirements.tmp.tmp

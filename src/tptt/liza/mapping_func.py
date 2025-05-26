@@ -48,6 +48,7 @@ class AttentionOperator(nn.Module):
         initial_state: [batch, num_heads, head_dim, head_dim] or None
         """
         batch_size, num_heads, seq_len, head_dim = query.shape
+        print("query shape : ", query.shape)
         chunk_size = get_valid_chunk_size(seq_len, chunk_size)
         num_chunks = seq_len // chunk_size
 
@@ -106,6 +107,8 @@ class AttentionOperator(nn.Module):
             u_matrix = t_matrix @ v_beta
 
             # Eq. (12): u_i = U - W S (S = state)
+            print("w_matrix : ", w_matrix.shape)
+            print("state : ", state.shape)
             u_i = u_matrix - torch.matmul(w_matrix, state)
 
             # Eq. (12): inter-chunk output: q S
@@ -134,6 +137,8 @@ class AttentionOperator(nn.Module):
 
         # Reshape back to [batch, num_heads, seq_len, head_dim]
         output = output.reshape(batch_size, num_heads, seq_len, head_dim)
+        print("output shape : ", output.shape)
+        print("state shape : ", state.shape)
         return output, state
 
     @staticmethod
