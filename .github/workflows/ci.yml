@@ -33,24 +33,3 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: |
           pytest --cov=src --cov-fail-under=70
-
-  release:
-    needs: build-and-test
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install python-semantic-release
-        run: pip install python-semantic-release
-
-      - name: Run semantic-release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: semantic-release publish

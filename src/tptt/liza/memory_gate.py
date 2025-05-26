@@ -141,9 +141,7 @@ class LiZAttention(nn.Module):
 
         # Retrieve recurrent state from cache (inference only)
         if self.training is False:
-            print(self.layer_idx)
             last_state = self.linear_cache[self.layer_idx]
-            print("last_state", last_state)
             recurrent_state = (
                 last_state["recurrent_state"]
                 if last_state is not None and "recurrent_state" in last_state
