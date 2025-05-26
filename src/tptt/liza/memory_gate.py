@@ -1,6 +1,6 @@
 """Linear Attention module for LiZA."""
 
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 import torch.nn.functional as F
@@ -9,8 +9,12 @@ from torch import nn
 
 from ..utils import LCache
 from .mapping_func import get_attention_operator
-from .utils import (apply_linear_attention_mask, repeat_kv, split_qkv,
-                    truncate_attention_mask)
+from .utils import (
+    apply_linear_attention_mask,
+    repeat_kv,
+    split_qkv,
+    truncate_attention_mask,
+)
 
 
 class LiZAttention(nn.Module):
@@ -107,9 +111,22 @@ class LiZAttention(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         **kwargs,
     ):
-        # Get values from kwargs
-        output_attentions = kwargs.get("output_attentions", False)
+        if self.training:
+            kwargs.pop("past_key_value", None)
+            kwargs["use_cache"] = False
+            use_linear_cache = False
+        else:
+            # Generation/Inference mode (incremental decoding)
+            if kwargs.get("past_key_value", None) is not None:
+                kwargs["use_cache"] = True
+                use_linear_cache = True
+            # Evaluation/Validation mode
+            else:
+                kwargs["use_cache"] = False
+                use_linear_cache = False
         past_key_value = kwargs.get("past_key_value", None)
+        output_attentions = kwargs.get("output_attentions", False)
+
         # Apply projections to hidden states
         q, k, v, out_proj = self.apply_projections(hidden_states)
         g = self.pool_g(k)
@@ -140,7 +157,7 @@ class LiZAttention(nn.Module):
         q, k, v, g = (x.to(torch.float32).contiguous() for x in (q, k, v, g))
 
         # Retrieve recurrent state from cache (inference only)
-        if self.training is False:
+        if use_linear_cache:
             last_state = self.linear_cache[self.layer_idx]
             recurrent_state = (
                 last_state["recurrent_state"]
@@ -163,7 +180,7 @@ class LiZAttention(nn.Module):
         o_lin = out_proj(o_lin)
 
         # Save recurrent state
-        if self.training is False:
+        if use_linear_cache:
             self.linear_cache.update(self.layer_idx, recurrent_state=recurrent_state)
 
         # Standard truncated attention (mask and rotation is applied inside)
