@@ -10,7 +10,7 @@ from torch import nn
 from src.tptt.liza.mapping_func import AttentionOperator
 from src.tptt.liza.memory_gate import LiZAttention
 from src.tptt.modeling_tptt import TpttConfig, TpttModel
-from src.tptt.utils import Cache
+from src.tptt.utils import LCache
 
 
 @pytest.fixture
@@ -228,12 +228,7 @@ def dummy_decoder(dummy_base_attn):
 
 @pytest.fixture
 def cache():
-    return Cache()
-
-
-@pytest.fixture
-def cache_with_max_length(max_length):
-    return Cache(max_length=max_length)
+    return LCache()
 
 
 @pytest.fixture

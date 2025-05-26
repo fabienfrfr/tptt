@@ -37,16 +37,6 @@ def test_cache_update_overwrite(cache, batch_size, seq_len, head_dim):
     assert torch.equal(cache[0]["key"], t2)
 
 
-def test_cache_sliding_window_not_applied_for_1d(
-    cache_with_max_length, batch_size, max_length
-):
-    """Test that sliding window is not applied for 1D tensors."""
-    t = torch.arange(batch_size * (max_length + 2), dtype=torch.float32)
-    cache_with_max_length.update(0, key=t)
-    state = cache_with_max_length[0]
-    assert torch.equal(state["key"], t)
-
-
 def test_cache_reset(cache, batch_size, seq_len, head_dim):
     """Test cache reset clears state and token count."""
     t = torch.randn(batch_size, seq_len, head_dim)
@@ -55,11 +45,6 @@ def test_cache_reset(cache, batch_size, seq_len, head_dim):
     cache.reset()
     assert cache.states == []
     assert cache.seen_tokens == 0
-
-
-def test_cache_get_max_length(cache_with_max_length, max_length):
-    """Test get_max_length returns the correct value."""
-    assert cache_with_max_length.get_max_length() == max_length
 
 
 def test_cache_update_with_multiple_keys(cache, batch_size, seq_len, head_dim):

@@ -9,13 +9,13 @@ from typing import Dict, List, Optional
 import torch
 
 
-class Cache:
+class LCache:
     """
     Cache for storing intermediate states of linear attention layers.
     Supports a sliding window if max_length is set.
     """
 
-    def __init__(self, max_length: Optional[int] = None):
+    def __init__(self):
         """
         Initialize the cache.
 
@@ -24,7 +24,6 @@ class Cache:
         """
         self.states: List[Dict[str, torch.Tensor]] = []
         self.seen_tokens = 0
-        self.max_length = max_length
 
     def __getitem__(self, layer_idx: int) -> Optional[Dict[str, torch.Tensor]]:
         """
@@ -43,12 +42,6 @@ class Cache:
         for key, value in kwargs.items():
             if isinstance(value, torch.Tensor):
                 value = value.detach()
-                # Apply sliding window if needed
-                if (
-                    self.max_length is not None
-                    and value.dim() > 1  # assume [batch, seq_len, ...]
-                ):
-                    value = value[:, -self.max_length :].contiguous()
             detached_kwargs[key] = value
 
         if len(self.states) <= layer_idx:
@@ -62,12 +55,6 @@ class Cache:
         """
         self.states.clear()
         self.seen_tokens = 0
-
-    def get_max_length(self):
-        """
-        Return the maximum length for the cache.
-        """
-        return self.max_length
 
 
 def extract_layer_idx(module_name: str) -> int:

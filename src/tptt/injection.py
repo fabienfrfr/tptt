@@ -4,7 +4,7 @@ from torch import nn
 from transformers.configuration_utils import PretrainedConfig
 
 from .liza.memory_gate import LiZAttention
-from .utils import Cache, extract_layer_idx
+from .utils import LCache, extract_layer_idx
 
 
 def inject_linear_attention(  # pylint: disable=too-many-arguments, too-many-positional-arguments
@@ -12,13 +12,13 @@ def inject_linear_attention(  # pylint: disable=too-many-arguments, too-many-pos
     config: PretrainedConfig,  # ou LlamaConfig, MistralConfig, etc.
     liza_attention: LiZAttention,
     target_modules: list,
-    cache: Cache = None,
+    linear_cache: LCache = None,
     operator_mode: str = "delta_rule",
     mag_weight: float = 0.5,
     max_chunk_size: int = 64,
 ):
     """Replace target modules in a model with LiZAttention."""
-    cache = cache or Cache(max_length=config.max_length)
+    linear_cache = linear_cache or LCache()
     # Inject LiZAttention into the model
     for name, _ in model.named_modules():
         if name in target_modules:
@@ -34,10 +34,10 @@ def inject_linear_attention(  # pylint: disable=too-many-arguments, too-many-pos
                     getattr(parent, last),
                     layer_idx=layer_idx,
                     config=config,
-                    cache=cache,
+                    linear_cache=linear_cache,
                     operator_mode=operator_mode,
                     mag_weight=mag_weight,
                     max_chunk_size=max_chunk_size,
                 ),
             )
-    return model, cache
+    return model, linear_cache

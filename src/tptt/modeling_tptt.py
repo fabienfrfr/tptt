@@ -9,7 +9,7 @@ from transformers import (AutoModelForCausalLM, Pipeline, PretrainedConfig,
 
 from .injection import inject_linear_attention
 from .liza.memory_gate import LiZAttention
-from .utils import Cache
+from .utils import LCache
 
 
 class TpttConfig(PretrainedConfig):
@@ -85,10 +85,10 @@ class TpttModel(PreTrainedModel):
         # Inject custom linear attention modules (LiZA)
         if config.inject_liza:
             # Cache object for attention modules (if needed)
-            self.cache = Cache()
+            self.linear_cache = LCache()
             self.inject_liza_attention()
         else:
-            self.cache = None
+            self.linear_cache = None
             print("LiZAttention injection is not enabled.")
 
     def inject_liza_attention(self):
@@ -106,7 +106,7 @@ class TpttModel(PreTrainedModel):
                 f"Target modules '{self.config.target_modules_names}' not found in the model."
             )
         # Inject LiZAttention (external function, not shown here)
-        self.backbone, self.cache = inject_linear_attention(
+        self.backbone, self.linear_cache = inject_linear_attention(
             self.backbone,
             self.backbone.config,
             liza_attention=LiZAttention,

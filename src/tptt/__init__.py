@@ -5,7 +5,7 @@ from .liza.mapping_func import AttentionOperator
 from .liza.memory_gate import LiZAttention
 from .modeling_tptt import TpttConfig, TpttModel, TpttPipeline
 from .tuner import AdjustMaGWeightCallback
-from .utils import Cache
+from .utils import LCache
 
 __all__ = [
     "TpttConfig",
@@ -13,7 +13,7 @@ __all__ = [
     "TpttPipeline",
     "inject_linear_attention",
     "AdjustMaGWeightCallback",
-    "Cache",
+    "LCache",
     "AttentionOperator",
     "LiZAttention",
 ]

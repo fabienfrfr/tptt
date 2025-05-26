@@ -7,14 +7,10 @@ import torch.nn.functional as F
 from einops import rearrange
 from torch import nn
 
-from ..utils import Cache
+from ..utils import LCache
 from .mapping_func import get_attention_operator
-from .utils import (
-    apply_linear_attention_mask,
-    repeat_kv,
-    split_qkv,
-    truncate_attention_mask,
-)
+from .utils import (apply_linear_attention_mask, repeat_kv, split_qkv,
+                    truncate_attention_mask)
 
 
 class LiZAttention(nn.Module):
@@ -25,7 +21,7 @@ class LiZAttention(nn.Module):
         base_attn: nn.Module,
         layer_idx: int,
         config,  # PretrainedConfig
-        cache: Cache = None,
+        linear_cache: LCache = None,
         operator_mode: str = "delta_rule",
         mag_weight: float = 0.5,
         max_chunk_size: int = 64,
@@ -37,7 +33,7 @@ class LiZAttention(nn.Module):
         self.mag_weight = mag_weight
         self.max_chunk_size = max_chunk_size
         self.attn_ratio = getattr(config, "attn_ratio", 0.5)
-        self.cache = cache or Cache(max_length=getattr(config, "max_length", 2048))
+        self.linear_cache = linear_cache or LCache()
 
         (
             self.num_heads,
@@ -146,7 +142,7 @@ class LiZAttention(nn.Module):
         # Retrieve recurrent state from cache (inference only)
         if self.training is False:
             print(self.layer_idx)
-            last_state = self.cache[self.layer_idx]
+            last_state = self.linear_cache[self.layer_idx]
             print("last_state", last_state)
             recurrent_state = (
                 last_state["recurrent_state"]
@@ -170,7 +166,7 @@ class LiZAttention(nn.Module):
 
         # Save recurrent state
         if self.training is False:
-            self.cache.update(self.layer_idx, recurrent_state=recurrent_state)
+            self.linear_cache.update(self.layer_idx, recurrent_state=recurrent_state)
 
         # Standard truncated attention (mask and rotation is applied inside)
         # need : cache_implementation="static"
