@@ -9,8 +9,12 @@ from torch import nn
 
 from ..utils import LCache
 from .mapping_func import get_attention_operator
-from .utils import (apply_linear_attention_mask, repeat_kv, split_qkv,
-                    truncate_attention_mask)
+from .utils import (
+    apply_linear_attention_mask,
+    repeat_kv,
+    split_qkv,
+    truncate_attention_mask,
+)
 
 
 class LiZAttention(nn.Module):
@@ -180,8 +184,6 @@ class LiZAttention(nn.Module):
             hidden_states, attention_mask = truncate_attention_mask(
                 hidden_states, attention_mask, self.max_attn_length
             )
-        else:
-            self.cache = None
         # Standard attention (mask and rotation is applied inside)
         o_base, attn_weights = self.base_attn(
             hidden_states, attention_mask=attention_mask, **kwargs
