@@ -188,8 +188,10 @@ class LiZAttention(nn.Module):
         )
 
         # Apply Memory as Gate in self-attention (with model_max_length management)
-        left_trunc = min(self.max_attn_length, o_base.shape[-2])
-        out = self.mag_weight * o_lin[:, -left_trunc:] + (1 - self.mag_weight) * o_base
+        if o_lin.shape[1] != o_base.shape[1]:
+            left_trunc = min(self.max_attn_length, o_lin.shape[1], o_base.shape[1])
+            o_lin, o_base = o_lin[:, -left_trunc:], o_base[:, -left_trunc:]
+        out = self.mag_weight * o_lin + (1 - self.mag_weight) * o_base
 
         # Return output following transformer convention
         if hasattr(self.base_attn, "o_proj") or hasattr(self.base_attn, "out_proj"):
