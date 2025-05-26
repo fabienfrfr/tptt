@@ -9,12 +9,8 @@ from torch import nn
 
 from ..utils import LCache
 from .mapping_func import get_attention_operator
-from .utils import (
-    apply_linear_attention_mask,
-    repeat_kv,
-    split_qkv,
-    truncate_attention_mask,
-)
+from .utils import (apply_linear_attention_mask, repeat_kv, split_qkv,
+                    truncate_attention_mask)
 
 
 class LiZAttention(nn.Module):
@@ -38,7 +34,6 @@ class LiZAttention(nn.Module):
         self.max_chunk_size = max_chunk_size
         self.attn_ratio = getattr(config, "attn_ratio", 0.5)
         self.linear_cache = linear_cache or LCache()
-
         (
             self.num_heads,
             self.head_dim,
@@ -186,7 +181,7 @@ class LiZAttention(nn.Module):
                 hidden_states, attention_mask, self.max_attn_length
             )
         else:
-            kwargs = {}
+            self.cache = None
         # Standard attention (mask and rotation is applied inside)
         o_base, attn_weights = self.base_attn(
             hidden_states, attention_mask=attention_mask, **kwargs
