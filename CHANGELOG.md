@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.2.1 (2025-05-26)
+
+### Bug Fixes
+
+- Quantization
+  ([`3863196`](https://github.com/fabienfrfr/LiZA/commit/38631969c429c006155da067eb9f57170ebb4c35))
+
+
 ## v0.2.0 (2025-05-26)
 
 ### Features
