@@ -11,6 +11,16 @@ from .injection import inject_linear_attention
 from .liza.memory_gate import LiZAttention
 from .utils import LCache
 
+BitsAndBytesConfig = None
+is_bnb_available = False
+if torch.cuda.is_available():
+    try:
+        from transformers import BitsAndBytesConfig
+
+        is_bnb_available = True
+    except ImportError:
+        pass
+
 
 class TpttConfig(PretrainedConfig):
     """
@@ -30,6 +40,8 @@ class TpttConfig(PretrainedConfig):
         mag_weight: float = 0.5,
         max_chunk_size: int = 64,
         inject_liza: bool = True,
+        load_quantized: bool = True,
+        bnb_config: Optional[BitsAndBytesConfig] = None,
         **kwargs,
     ):
         """
@@ -59,6 +71,17 @@ class TpttConfig(PretrainedConfig):
         self.max_chunk_size = max_chunk_size
         self.inject_liza = inject_liza
 
+        self.load_quantized = load_quantized
+        if is_bnb_available and bnb_config is None and load_quantized:
+            self.bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_quant_type="nf4",
+            )
+        else:
+            self.bnb_config = bnb_config
+
 
 class TpttModel(PreTrainedModel):
     """
@@ -81,6 +104,8 @@ class TpttModel(PreTrainedModel):
             config.base_model_name,
             trust_remote_code=True,
             attn_implementation="eager",  # For LiZA/LoRA compatibility
+            device_map="auto",
+            quantization_config=config.bnb_config if is_bnb_available else None,
         )
         # Inject custom linear attention modules (LiZA)
         if config.inject_liza:
