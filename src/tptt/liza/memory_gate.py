@@ -185,6 +185,8 @@ class LiZAttention(nn.Module):
             hidden_states, attention_mask = truncate_attention_mask(
                 hidden_states, attention_mask, self.max_attn_length
             )
+        else:
+            kwargs = {}
         # Standard attention (mask and rotation is applied inside)
         o_base, attn_weights = self.base_attn(
             hidden_states, attention_mask=attention_mask, **kwargs
