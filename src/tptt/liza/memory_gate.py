@@ -114,16 +114,13 @@ class LiZAttention(nn.Module):
         if self.training:
             kwargs.pop("past_key_value", None)
             kwargs["use_cache"] = False
-            use_linear_cache = False
         else:
             # Generation/Inference mode (incremental decoding)
             if kwargs.get("past_key_value", None) is not None:
                 kwargs["use_cache"] = True
-                use_linear_cache = True
             # Evaluation/Validation mode
             else:
                 kwargs["use_cache"] = False
-                use_linear_cache = False
         past_key_value = kwargs.get("past_key_value", None)
         output_attentions = kwargs.get("output_attentions", False)
 
@@ -157,7 +154,7 @@ class LiZAttention(nn.Module):
         q, k, v, g = (x.to(torch.float32).contiguous() for x in (q, k, v, g))
 
         # Retrieve recurrent state from cache (inference only)
-        if use_linear_cache:
+        if kwargs["use_cache"]:
             last_state = self.linear_cache[self.layer_idx]
             recurrent_state = (
                 last_state["recurrent_state"]
@@ -180,14 +177,15 @@ class LiZAttention(nn.Module):
         o_lin = out_proj(o_lin)
 
         # Save recurrent state
-        if use_linear_cache:
+        if kwargs["use_cache"]:
             self.linear_cache.update(self.layer_idx, recurrent_state=recurrent_state)
 
-        # Standard truncated attention (mask and rotation is applied inside)
-        # need : cache_implementation="static"
-        hidden_states, attention_mask = truncate_attention_mask(
-            hidden_states, attention_mask, self.max_attn_length
-        )
+        # If cache_implementation="static" -> truncated attention
+        if kwargs["use_cache"]:
+            hidden_states, attention_mask = truncate_attention_mask(
+                hidden_states, attention_mask, self.max_attn_length
+            )
+        # Standard attention (mask and rotation is applied inside)
         o_base, attn_weights = self.base_attn(
             hidden_states, attention_mask=attention_mask, **kwargs
         )
