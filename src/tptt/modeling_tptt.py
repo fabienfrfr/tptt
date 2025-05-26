@@ -4,8 +4,12 @@ from typing import List, Optional
 
 import torch
 from peft import LoraConfig, get_peft_model
-from transformers import (AutoModelForCausalLM, Pipeline, PretrainedConfig,
-                          PreTrainedModel)
+from transformers import (
+    AutoModelForCausalLM,
+    Pipeline,
+    PretrainedConfig,
+    PreTrainedModel,
+)
 
 from .injection import inject_linear_attention
 from .liza.memory_gate import LiZAttention
@@ -41,7 +45,6 @@ class TpttConfig(PretrainedConfig):
         max_chunk_size: int = 64,
         inject_liza: bool = True,
         load_quantized: bool = True,
-        bnb_config: Optional[BitsAndBytesConfig] = None,
         **kwargs,
     ):
         """
@@ -70,17 +73,7 @@ class TpttConfig(PretrainedConfig):
         self.mag_weight = mag_weight
         self.max_chunk_size = max_chunk_size
         self.inject_liza = inject_liza
-
         self.load_quantized = load_quantized
-        if is_bnb_available and bnb_config is None and load_quantized:
-            self.bnb_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=torch.bfloat16,
-                bnb_4bit_use_double_quant=True,
-                bnb_4bit_quant_type="nf4",
-            )
-        else:
-            self.bnb_config = bnb_config
 
 
 class TpttModel(PreTrainedModel):
@@ -91,7 +84,11 @@ class TpttModel(PreTrainedModel):
 
     config_class = TpttConfig
 
-    def __init__(self, config: TpttConfig):
+    def __init__(
+        self,
+        config: TpttConfig,
+        bnb_config: Optional[BitsAndBytesConfig] = None,
+    ):
         """
         Initialize TpttModel.
 
@@ -99,13 +96,21 @@ class TpttModel(PreTrainedModel):
             config (TpttConfig): Model configuration.
         """
         super().__init__(config)
+        # Load BitsAndBytesConfig if available and not provided
+        if is_bnb_available and bnb_config is None and config.load_quantized:
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_quant_type="nf4",
+            )
         # Load the base pretrained model (e.g., Llama, Mistral, etc.)
         self.backbone = AutoModelForCausalLM.from_pretrained(
             config.base_model_name,
             trust_remote_code=True,
             attn_implementation="eager",  # For LiZA/LoRA compatibility
             device_map="auto",
-            quantization_config=config.bnb_config if is_bnb_available else None,
+            quantization_config=bnb_config,
         )
         # Inject custom linear attention modules (LiZA)
         if config.inject_liza:
