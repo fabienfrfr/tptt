@@ -9,8 +9,12 @@ from torch import nn
 
 from ..utils import Cache
 from .mapping_func import get_attention_operator
-from .utils import (apply_linear_attention_mask, repeat_kv, split_qkv,
-                    truncate_attention_mask)
+from .utils import (
+    apply_linear_attention_mask,
+    repeat_kv,
+    split_qkv,
+    truncate_attention_mask,
+)
 
 
 class LiZAttention(nn.Module):
@@ -143,7 +147,7 @@ class LiZAttention(nn.Module):
         if self.training is False:
             print(self.layer_idx)
             last_state = self.cache[self.layer_idx]
-            print("last_state", last_state.keys())
+            print("last_state", last_state)
             recurrent_state = (
                 last_state["recurrent_state"]
                 if last_state is not None and "recurrent_state" in last_state
