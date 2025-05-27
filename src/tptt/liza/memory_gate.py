@@ -110,13 +110,6 @@ class LiZAttention(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         **kwargs,
     ):
-        # Convert input to the expected dtype and device
-        model_dtype = next(self.base_attn.parameters()).dtype
-        device = hidden_states.device
-        hidden_states = hidden_states.to(device=device, dtype=model_dtype)
-        if attention_mask is not None:
-            attention_mask = attention_mask.to(device=device)
-        # Force training config if not specified
         if self.training:
             kwargs.pop("past_key_value", None)
             kwargs["use_cache"] = False
@@ -157,6 +150,8 @@ class LiZAttention(nn.Module):
         g = F.logsigmoid(g) / gate_norm
         g = torch.clamp(g, min=-gate_norm, max=gate_norm)
 
+        # Convert to float32 for numerical stability
+        model_dtype = q.dtype
         q, k, v, g = (x.to(torch.float32).contiguous() for x in (q, k, v, g))
 
         # Retrieve recurrent state from cache (inference only)
@@ -200,7 +195,7 @@ class LiZAttention(nn.Module):
         if o_lin.shape[1] != o_base.shape[1]:
             left_trunc = min(self.max_attn_length, o_lin.shape[1], o_base.shape[1])
             o_lin, o_base = o_lin[:, -left_trunc:], o_base[:, -left_trunc:]
-        out = self.mag_weight * o_lin + (1 - self.mag_weight) * o_base.to(o_lin.dtype)
+        out = self.mag_weight * o_lin + (1 - self.mag_weight) * o_base.to(model_dtype)
 
         # Return output following transformer convention
         if hasattr(self.base_attn, "o_proj") or hasattr(self.base_attn, "out_proj"):
