@@ -111,6 +111,7 @@ class LiZAttention(nn.Module):
         **kwargs,
     ):
         device = hidden_states.device
+        self.base_attn.to(device)
         if self.training:
             kwargs.pop("past_key_value", None)
             kwargs["use_cache"] = False
@@ -126,7 +127,6 @@ class LiZAttention(nn.Module):
 
         # Apply projections to hidden states
         q, k, v, out_proj = self.apply_projections(hidden_states)
-        q, k, v = q.to(device), k.to(device), v.to(device)
         g = self.pool_g(k)
 
         # Manage attention mask (with padding)
@@ -177,7 +177,7 @@ class LiZAttention(nn.Module):
             recurrent_state=recurrent_state,
         )
         o_lin = rearrange(o_lin, "b h n d -> b n (h d)").to(model_dtype)
-        o_lin = out_proj(o_lin)
+        o_lin = out_proj(o_lin).to(model_dtype)  # force to model dtype
 
         # Save recurrent state
         if kwargs["use_cache"]:
