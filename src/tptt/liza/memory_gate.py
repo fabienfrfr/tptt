@@ -110,6 +110,7 @@ class LiZAttention(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         **kwargs,
     ):
+        device = hidden_states.device
         if self.training:
             kwargs.pop("past_key_value", None)
             kwargs["use_cache"] = False
@@ -125,6 +126,7 @@ class LiZAttention(nn.Module):
 
         # Apply projections to hidden states
         q, k, v, out_proj = self.apply_projections(hidden_states)
+        q, k, v = q.to(device), k.to(device), v.to(device)
         g = self.pool_g(k)
 
         # Manage attention mask (with padding)
@@ -150,7 +152,7 @@ class LiZAttention(nn.Module):
         g = F.logsigmoid(g) / gate_norm
         g = torch.clamp(g, min=-gate_norm, max=gate_norm)
 
-        # Convert to float32 for numerical stability
+        # Convert to float32 for numerical stability and get model dtype
         model_dtype = q.dtype
         q, k, v, g = (x.to(torch.float32).contiguous() for x in (q, k, v, g))
 
