@@ -122,7 +122,7 @@ class LiZAttention(nn.Module):
             # Evaluation/Validation mode
             else:
                 kwargs["use_cache"] = False
-
+        kwargs["return_legacy_cache"] = kwargs["use_cache"]
         # Apply projections to hidden states
         q, k, v, out_proj = self.apply_projections(hidden_states)
         g = self.pool_g(k)
