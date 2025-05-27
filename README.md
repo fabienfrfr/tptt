@@ -4,7 +4,7 @@
 </h3>
 
 **TPTT** is a modular Python library designed to inject efficient linearized attention (*LiZA*) mechanisms-such as *Memory as Gate* (described in [Titans](https://arxiv.org/html/2501.00663v1))-into pretrained transformers 🤗.
-It leverages the [flash-linear-attention](https://github.com/fla-org/flash-linear-attention) library for high-performance implementations, enabling scalable and memory-efficient attention computations. 
+It leverages the [flash-linear-attention](https://github.com/fla-org/flash-linear-attention) library for high-performance implementations, enabling scalable and memory-efficient attention computations.
 
 ---
 
@@ -32,7 +32,9 @@ make install
 ## Complete Usage Example
 
 ```bash
-pip install -q -U git+https://github.com/fabienfrfr/tptt@main
+#!pip install -q flash-linear-attention
+!pip install -q bitsandbytes accelerate
+!pip install -q -U git+https://github.com/fabienfrfr/tptt@main
 ```
 
 ```python

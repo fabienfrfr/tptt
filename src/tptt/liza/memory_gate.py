@@ -9,8 +9,12 @@ from torch import nn
 
 from ..utils import LCache
 from .mapping_func import get_attention_operator
-from .utils import (apply_linear_attention_mask, repeat_kv, split_qkv,
-                    truncate_attention_mask)
+from .utils import (
+    apply_linear_attention_mask,
+    repeat_kv,
+    split_qkv,
+    truncate_attention_mask,
+)
 
 
 class LiZAttention(nn.Module):
@@ -106,6 +110,13 @@ class LiZAttention(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         **kwargs,
     ):
+        # Convert input to the expected dtype and device
+        model_dtype = next(self.base_attn.parameters()).dtype
+        device = hidden_states.device
+        hidden_states = hidden_states.to(device=device, dtype=model_dtype)
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(device=device)
+        # Force training config if not specified
         if self.training:
             kwargs.pop("past_key_value", None)
             kwargs["use_cache"] = False
@@ -168,7 +179,7 @@ class LiZAttention(nn.Module):
             chunk_size=self.max_chunk_size,
             recurrent_state=recurrent_state,
         )
-        o_lin = rearrange(o_lin, "b h n d -> b n (h d)")
+        o_lin = rearrange(o_lin, "b h n d -> b n (h d)").to(model_dtype)
         o_lin = out_proj(o_lin)
 
         # Save recurrent state
@@ -189,7 +200,7 @@ class LiZAttention(nn.Module):
         if o_lin.shape[1] != o_base.shape[1]:
             left_trunc = min(self.max_attn_length, o_lin.shape[1], o_base.shape[1])
             o_lin, o_base = o_lin[:, -left_trunc:], o_base[:, -left_trunc:]
-        out = self.mag_weight * o_lin + (1 - self.mag_weight) * o_base
+        out = self.mag_weight * o_lin + (1 - self.mag_weight) * o_base.to(o_lin.dtype)
 
         # Return output following transformer convention
         if hasattr(self.base_attn, "o_proj") or hasattr(self.base_attn, "out_proj"):

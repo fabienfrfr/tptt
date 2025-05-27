@@ -4,12 +4,8 @@ from typing import List, Optional
 
 import torch
 from peft import LoraConfig, get_peft_model
-from transformers import (
-    AutoModelForCausalLM,
-    Pipeline,
-    PretrainedConfig,
-    PreTrainedModel,
-)
+from transformers import (AutoModelForCausalLM, Pipeline, PretrainedConfig,
+                          PreTrainedModel)
 
 from .injection import inject_linear_attention
 from .liza.memory_gate import LiZAttention
@@ -189,9 +185,18 @@ class TpttModel(PreTrainedModel):
         self.backbone.print_trainable_parameters()
 
     def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
-        """
-        Forward pass. All arguments are passed to the underlying base model.
-        """
+        """Forward pass. All arguments are passed to the underlying base model."""
+        # Get the dtype of the model's parameters
+        model_dtype = next(self.backbone.parameters()).dtype
+
+        # Convert inputs to the model's dtype and device
+        if input_ids is not None:
+            input_ids = input_ids.to(device=self.device, dtype=model_dtype)
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(device=self.device, dtype=model_dtype)
+        if labels is not None:
+            labels = labels.to(device=self.device, dtype=model_dtype)
+
         return self.backbone(
             input_ids=input_ids, attention_mask=attention_mask, labels=labels, **kwargs
         )
