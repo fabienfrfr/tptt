@@ -1,0 +1,7 @@
+__pycache__/
+.mypy_cache/
+*.pyc
+*.pyo
+.env
+.ipynb_checkpoints/
+.coverage
