@@ -2,6 +2,23 @@
 
 <!-- version list -->
 
+## v1.0.0 (2025-05-27)
+
+### Testing
+
+- Device and model_dtypes
+  ([`7883342`](https://github.com/fabienfrfr/LiZA/commit/78833424fac0508dceaf3f02548a3ffba023645b))
+
+- Make testing dtype in forward
+  ([`ee646e4`](https://github.com/fabienfrfr/LiZA/commit/ee646e404b9899d492b0d86df2cd761246f5cceb))
+
+- Quantization restriction if multiple GPU
+  ([`7a45b6e`](https://github.com/fabienfrfr/LiZA/commit/7a45b6ee12e1764a221e3357953e67d72e7f7bdd))
+
+- To model during forward
+  ([`04f5d62`](https://github.com/fabienfrfr/LiZA/commit/04f5d62a2f39cd02ccd6b30b7c8b7191e2eac3b7))
+
+
 ## v0.2.1 (2025-05-26)
 
 ### Bug Fixes
