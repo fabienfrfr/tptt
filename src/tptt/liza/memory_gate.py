@@ -9,8 +9,12 @@ from torch import nn
 
 from ..utils import LCache
 from .mapping_func import get_attention_operator
-from .utils import (apply_linear_attention_mask, repeat_kv, split_qkv,
-                    truncate_attention_mask)
+from .utils import (
+    apply_linear_attention_mask,
+    repeat_kv,
+    split_qkv,
+    truncate_attention_mask,
+)
 
 
 class LiZAttention(nn.Module):
@@ -185,9 +189,23 @@ class LiZAttention(nn.Module):
                 hidden_states, attention_mask, self.max_attn_length
             )
         # Standard attention (mask and rotation is applied inside)
-        o_base, attn_weights = self.base_attn(
+        base_attn_outputs = self.base_attn(
             hidden_states, attention_mask=attention_mask, **kwargs
         )
+        if isinstance(base_attn_outputs, tuple):
+            if len(base_attn_outputs) == 3:
+                o_base, attn_weights, present_key_value = base_attn_outputs
+            elif len(base_attn_outputs) == 2:
+                o_base, attn_weights = base_attn_outputs
+                present_key_value = past_key_value  # None
+            else:
+                raise ValueError(
+                    f"Unexpected number of outputs from base_attn: {len(base_attn_outputs)}"
+                )
+        else:
+            o_base = base_attn_outputs
+            attn_weights = None
+            present_key_value = past_key_value  # None
 
         # Apply Memory as Gate in self-attention (with model_max_length management)
         if o_lin.shape[1] != o_base.shape[1]:
@@ -199,8 +217,8 @@ class LiZAttention(nn.Module):
         if hasattr(self.base_attn, "o_proj") or hasattr(self.base_attn, "out_proj"):
             # Llama/Mistral/OpenELM
             if output_attentions:
-                return out, attn_weights, past_key_value
-            return out, past_key_value
+                return out, attn_weights, present_key_value
+            return out, present_key_value
         else:
             # GPT-2
             if output_attentions:
