@@ -211,7 +211,10 @@ class LiZAttention(nn.Module):
         # Return output following transformer convention
         if isinstance(base_attn_outputs, tuple):
             if len(base_attn_outputs) == 3:
-                return out, attn_weights, present_key_value
+                if kwargs["use_cache"]:
+                    return out, attn_weights, present_key_value
+                else:
+                    return out, attn_weights, ()
             elif len(base_attn_outputs) == 2:
                 return out, attn_weights
         else:
