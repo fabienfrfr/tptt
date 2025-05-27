@@ -122,8 +122,6 @@ class LiZAttention(nn.Module):
             # Evaluation/Validation mode
             else:
                 kwargs["use_cache"] = False
-        past_key_value = kwargs.get("past_key_value", None)
-        output_attentions = kwargs.get("output_attentions", False)
 
         # Apply projections to hidden states
         q, k, v, out_proj = self.apply_projections(hidden_states)
@@ -197,15 +195,12 @@ class LiZAttention(nn.Module):
                 o_base, attn_weights, present_key_value = base_attn_outputs
             elif len(base_attn_outputs) == 2:
                 o_base, attn_weights = base_attn_outputs
-                present_key_value = past_key_value  # None
             else:
                 raise ValueError(
                     f"Unexpected number of outputs from base_attn: {len(base_attn_outputs)}"
                 )
         else:
             o_base = base_attn_outputs
-            attn_weights = None
-            present_key_value = past_key_value  # None
 
         # Apply Memory as Gate in self-attention (with model_max_length management)
         if o_lin.shape[1] != o_base.shape[1]:
@@ -214,13 +209,10 @@ class LiZAttention(nn.Module):
         out = self.mag_weight * o_lin + (1 - self.mag_weight) * o_base.to(model_dtype)
 
         # Return output following transformer convention
-        if hasattr(self.base_attn, "o_proj") or hasattr(self.base_attn, "out_proj"):
-            # Llama/Mistral/OpenELM
-            if output_attentions:
+        if isinstance(base_attn_outputs, tuple):
+            if len(base_attn_outputs) == 3:
                 return out, attn_weights, present_key_value
-            return out, present_key_value
-        else:
-            # GPT-2
-            if output_attentions:
+            elif len(base_attn_outputs) == 2:
                 return out, attn_weights
+        else:
             return out
