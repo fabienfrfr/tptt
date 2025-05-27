@@ -1,15 +1,11 @@
 """This module implements the TPTT model with linear attention and LoRA support."""
 
-from typing import List, Optional
+from typing import Any, Dict, Optional
 
 import torch
 from peft import LoraConfig, get_peft_model
-from transformers import (
-    AutoModelForCausalLM,
-    Pipeline,
-    PretrainedConfig,
-    PreTrainedModel,
-)
+from transformers import (AutoModelForCausalLM, Pipeline, PretrainedConfig,
+                          PreTrainedModel)
 
 from .injection import inject_linear_attention
 from .liza.memory_gate import LiZAttention
@@ -38,13 +34,14 @@ class TpttConfig(PretrainedConfig):
         self,
         base_model_name: str = "gpt2",
         base_tokenizer_name: Optional[str] = None,
-        target_modules_names: Optional[List[str]] = None,
+        target_modules_names: Optional[list[str]] = None,
         operator_mode: str = "delta_rule",
         attn_ratio: float = 0.5,
         mag_weight: float = 0.5,
         max_chunk_size: int = 64,
         inject_liza: bool = True,
         load_quantized: bool = True,
+        backbone_kwargs: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
         """
@@ -74,6 +71,7 @@ class TpttConfig(PretrainedConfig):
         self.max_chunk_size = max_chunk_size
         self.inject_liza = inject_liza
         self.load_quantized = load_quantized
+        self.backbone_kwargs = backbone_kwargs or {}
 
 
 class TpttModel(PreTrainedModel):
@@ -87,7 +85,9 @@ class TpttModel(PreTrainedModel):
     def __init__(
         self,
         config: TpttConfig,
+        backbone: Optional[PreTrainedModel] = None,
         bnb_config: Optional[BitsAndBytesConfig] = None,
+        **kwargs,
     ):
         """
         Initialize TpttModel.
@@ -96,8 +96,8 @@ class TpttModel(PreTrainedModel):
             config (TpttConfig): Model configuration.
         """
         super().__init__(config)
-        # Load BitsAndBytesConfig if available and not provided
-        if is_bnb_available and bnb_config is None and config.load_quantized:
+        # Setup BitsAndBytesConfig if needed and not provided
+        if bnb_config is None and config.load_quantized:
             if torch.cuda.device_count() == 1:
                 bnb_config = BitsAndBytesConfig(
                     load_in_4bit=True,
@@ -106,33 +106,42 @@ class TpttModel(PreTrainedModel):
                     bnb_4bit_quant_type="nf4",
                 )
             else:
-                print("Using quantization not possible for multiple GPU.")
-        # Load the base pretrained model (e.g., Llama, Mistral, etc.)
-        self.backbone = AutoModelForCausalLM.from_pretrained(
-            config.base_model_name,
-            trust_remote_code=True,
-            attn_implementation="eager",  # For LiZA/LoRA compatibility
-            # device_map="auto", # make error if using bnb_config
-            quantization_config=bnb_config,
-        )
-        # Serialize quantization config if it exists
+                print("Quantization in 4-bit mode is not supported for multiple GPUs.")
+
+        # Load or assign backbone
+        if backbone is not None:
+            self.backbone = backbone
+        else:
+            backbone_loading_kwargs = {
+                "trust_remote_code": True,
+                "attn_implementation": "eager",  # For LiZA/LoRA compatibility
+                "quantization_config": bnb_config,
+                **config.backbone_kwargs,
+                **kwargs,
+            }
+            self.backbone = AutoModelForCausalLM.from_pretrained(
+                config.base_model_name,
+                **backbone_loading_kwargs,
+            )
+
+        # Serialize quantization config if present
         if hasattr(self.backbone.config, "quantization_config"):
             self.backbone.config.quantization_config = (
                 self.backbone.config.quantization_config.to_dict()
             )
         # Inject custom linear attention modules (LiZA)
+        self.linear_cache = None
         if config.inject_liza:
-            # Cache object for attention modules (if needed)
-            self.linear_cache = LCache()
             self.inject_liza_attention()
         else:
-            self.linear_cache = None
             print("LiZAttention injection is not enabled.")
 
     def inject_liza_attention(self):
         """
         Inject LiZAttention into the specified target modules of the base model.
         """
+        # Cache object for attention modules (if needed)
+        self.linear_cache = LCache()
         # Find target modules by suffix (e.g., "attn", "attention")
         target_modules = [
             name

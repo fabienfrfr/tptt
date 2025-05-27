@@ -2,8 +2,6 @@
 
 from typing import Optional
 
-# from transformers.cache_utils import DynamicCache
-
 import torch
 import torch.nn.functional as F
 from einops import rearrange
@@ -11,12 +9,12 @@ from torch import nn
 
 from ..utils import LCache
 from .mapping_func import get_attention_operator
-from .utils import (
-    apply_linear_attention_mask,
-    repeat_kv,
-    split_qkv,
-    truncate_attention_mask,
-)
+from .utils import (apply_linear_attention_mask, repeat_kv, split_qkv,
+                    truncate_attention_mask)
+
+# from transformers.cache_utils import DynamicCache
+
+
 
 
 class LiZAttention(nn.Module):
