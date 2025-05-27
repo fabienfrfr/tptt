@@ -2,6 +2,8 @@
 
 from typing import Optional
 
+# from transformers.cache_utils import DynamicCache
+
 import torch
 import torch.nn.functional as F
 from einops import rearrange
@@ -122,7 +124,7 @@ class LiZAttention(nn.Module):
             # Evaluation/Validation mode
             else:
                 kwargs["use_cache"] = False
-        kwargs["return_legacy_cache"] = kwargs["use_cache"]
+
         # Apply projections to hidden states
         q, k, v, out_proj = self.apply_projections(hidden_states)
         g = self.pool_g(k)
@@ -211,10 +213,7 @@ class LiZAttention(nn.Module):
         # Return output following transformer convention
         if isinstance(base_attn_outputs, tuple):
             if len(base_attn_outputs) == 3:
-                if kwargs["use_cache"]:
-                    return out, attn_weights, present_key_value
-                else:
-                    return out, attn_weights, ()
+                return out, attn_weights, present_key_value
             elif len(base_attn_outputs) == 2:
                 return out, attn_weights
         else:
