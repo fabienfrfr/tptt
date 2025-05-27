@@ -9,12 +9,8 @@ from torch import nn
 
 from ..utils import LCache
 from .mapping_func import get_attention_operator
-from .utils import (
-    apply_linear_attention_mask,
-    repeat_kv,
-    split_qkv,
-    truncate_attention_mask,
-)
+from .utils import (apply_linear_attention_mask, repeat_kv, split_qkv,
+                    truncate_attention_mask)
 
 
 class LiZAttention(nn.Module):

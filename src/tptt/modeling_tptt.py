@@ -98,12 +98,15 @@ class TpttModel(PreTrainedModel):
         super().__init__(config)
         # Load BitsAndBytesConfig if available and not provided
         if is_bnb_available and bnb_config is None and config.load_quantized:
-            bnb_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=torch.bfloat16,
-                bnb_4bit_use_double_quant=True,
-                bnb_4bit_quant_type="nf4",
-            )
+            if torch.cuda.device_count() == 1:
+                bnb_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.bfloat16,
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_quant_type="nf4",
+                )
+            else:
+                print("Using quantization not possible for multiple GPU.")
         # Load the base pretrained model (e.g., Llama, Mistral, etc.)
         self.backbone = AutoModelForCausalLM.from_pretrained(
             config.base_model_name,
