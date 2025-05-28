@@ -9,12 +9,14 @@ from torch import nn
 
 from ..utils import LCache
 from .mapping_func import get_attention_operator
-from .utils import (apply_linear_attention_mask, repeat_kv, split_qkv,
-                    truncate_attention_mask)
+from .utils import (
+    apply_linear_attention_mask,
+    repeat_kv,
+    split_qkv,
+    truncate_attention_mask,
+)
 
 # from transformers.cache_utils import DynamicCache
-
-
 
 
 class LiZAttention(nn.Module):
@@ -56,9 +58,12 @@ class LiZAttention(nn.Module):
         num_heads = (
             getattr(base_attn, "num_heads", None)
             or getattr(base_attn, "num_q_heads", None)
+            or getattr(config, "num_heads", None)
             or getattr(config, "num_attention_heads", None)
         )
-        head_dim = getattr(base_attn, "head_dim", None)
+        head_dim = getattr(base_attn, "head_dim", None) or getattr(
+            config, "head_dim", None
+        )
         num_key_value_heads = (
             getattr(base_attn, "num_kv_heads", None)
             or getattr(base_attn, "num_k_heads", None)
@@ -203,10 +208,15 @@ class LiZAttention(nn.Module):
             o_base = base_attn_outputs
 
         # Apply Memory as Gate in self-attention (with model_max_length management)
-        if o_lin.shape[1] != o_base.shape[1]:
-            left_trunc = min(self.max_attn_length, o_lin.shape[1], o_base.shape[1])
-            o_lin, o_base = o_lin[:, -left_trunc:], o_base[:, -left_trunc:]
-        out = self.mag_weight * o_lin + (1 - self.mag_weight) * o_base.to(model_dtype)
+        left_trunc = min(self.max_attn_length, o_lin.shape[1], o_base.shape[1])
+        if (
+            o_lin.shape[1] != o_base.shape[1]
+            or o_lin.shape[1] > self.max_attn_length
+            or o_base.shape[1] > self.max_attn_length
+        ):
+            o_base = o_base[:, -left_trunc:]
+        out = self.mag_weight * o_lin
+        out[:, -left_trunc:] += (1 - self.mag_weight) * o_base.to(model_dtype)
 
         # Return output following transformer convention
         if isinstance(base_attn_outputs, tuple):

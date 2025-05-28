@@ -178,7 +178,7 @@ class TpttModel(PreTrainedModel):
                 "v_proj",
                 "o_proj",  # Llama, Mistral, OLMo
                 "qkv_proj",
-                "out_proj",  # OpenELM, some GPTs
+                "out_proj",  # OpenELM,
                 "c_attn",
                 "c_proj",  # GPT-2
             ]
