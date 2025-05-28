@@ -208,19 +208,18 @@ class LiZAttention(nn.Module):
             o_base = base_attn_outputs
 
         # Apply Memory as Gate in self-attention (with model_max_length management)
+        left_trunc = min(self.max_attn_length, o_lin.shape[1], o_base.shape[1])
         if (
-            o_lin.shape[1] != o_base.shape[1]
-            or o_lin.shape[1] > self.max_attn_length
+            o_lin.shape[1] > self.max_attn_length
             or o_base.shape[1] > self.max_attn_length
         ):
-            left_trunc = min(self.max_attn_length, o_lin.shape[1], o_base.shape[1])
             o_base = o_base[:, -left_trunc:]
             out = self.mag_weight * o_lin
             out[:, -left_trunc:] += (1 - self.mag_weight) * o_base.to(model_dtype)
-        else:
-            out = self.mag_weight * o_lin + (1 - self.mag_weight) * o_base.to(
-                model_dtype
-            )
+        elif o_lin.shape[1] != o_base.shape[1]:
+            o_base = o_base[:, -left_trunc:]
+            o_lin = o_lin[:, -left_trunc:]
+        out = self.mag_weight * o_lin + (1 - self.mag_weight) * o_base.to(model_dtype)
 
         # Return output following transformer convention
         if isinstance(base_attn_outputs, tuple):
