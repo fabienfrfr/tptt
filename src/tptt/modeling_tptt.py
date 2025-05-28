@@ -4,8 +4,12 @@ from typing import Any, Dict, Optional
 
 import torch
 from peft import LoraConfig, get_peft_model
-from transformers import (AutoModelForCausalLM, Pipeline, PretrainedConfig,
-                          PreTrainedModel)
+from transformers import (
+    AutoModelForCausalLM,
+    Pipeline,
+    PretrainedConfig,
+    PreTrainedModel,
+)
 
 from .injection import inject_linear_attention
 from .liza.memory_gate import LiZAttention
@@ -204,6 +208,7 @@ class TpttModel(PreTrainedModel):
         """Forward pass. All arguments are passed to the underlying base model."""
         if self.training:
             kwargs["use_cache"] = False
+            kwargs.pop("num_items_in_batch", None)
         return self.backbone(
             input_ids=input_ids, attention_mask=attention_mask, labels=labels, **kwargs
         )
