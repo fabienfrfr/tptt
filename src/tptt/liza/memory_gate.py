@@ -215,10 +215,6 @@ class LiZAttention(nn.Module):
         else:
             o_base = base_attn_outputs
 
-        print("o_lin shape:", o_lin.shape)
-        print("o_base shape:", o_base.shape)
-        print("hidden_states shape:", hidden_states.shape)
-
         # Apply Memory as Gate in self-attention (with model_max_length management)
         if o_lin.shape[1] != o_base.shape[1]:
             left_trunc = min(self.max_attn_length, o_lin.shape[1], o_base.shape[1])
