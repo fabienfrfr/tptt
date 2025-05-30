@@ -1,6 +1,6 @@
 """Linear Attention module for LiZA."""
 
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -13,10 +13,7 @@ from .utils import (
     apply_linear_attention_mask,
     repeat_kv,
     split_qkv,
-    truncate_attention_mask,
 )
-
-# from transformers.cache_utils import DynamicCache
 
 
 class LiZAttention(nn.Module):
@@ -46,13 +43,13 @@ class LiZAttention(nn.Module):
             self.num_key_value_heads,
             self.num_key_value_groups,
             self.max_attn_length,
-        ) = self.get_attention_parameters(base_attn, config)
+        ) = self._get_attention_parameters(base_attn, config)
         self.operator = get_attention_operator(operator_mode)
         self.pool_g = nn.AdaptiveAvgPool1d(
             output_size=self.head_dim * self.num_key_value_heads
         )
 
-    def get_attention_parameters(self, base_attn, config):
+    def _get_attention_parameters(self, base_attn, config):
         """Retrieve the attention parameters from the base attention module."""
         # first order base attention module and second order config
         num_heads = (
@@ -87,7 +84,7 @@ class LiZAttention(nn.Module):
             max_attn_length,
         )
 
-    def apply_projections(self, hidden_states):
+    def _apply_projections(self, hidden_states):
         base_attn = self.base_attn
         if hasattr(base_attn, "q_proj"):
             # LLama, OLMO and Mistral style
@@ -109,33 +106,9 @@ class LiZAttention(nn.Module):
             raise ValueError("Unsupported attention module: cannot find projections.")
         return q, k, v, out_proj
 
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
-        **kwargs,
-    ):
-        device = hidden_states.device
-        self.base_attn.to(device)
-        if self.training:
-            kwargs.pop("past_key_value", None)
-            kwargs["use_cache"] = False
-        else:
-            # Generation/Inference mode (incremental decoding)
-            if kwargs.get("past_key_value", None) is not None:
-                kwargs["use_cache"] = True
-            # Evaluation/Validation mode
-            else:
-                kwargs["use_cache"] = False
-
-        # Apply projections to hidden states
-        q, k, v, out_proj = self.apply_projections(hidden_states)
+    def _prepare_attn_input(self, q, k, v, gate_norm):
+        # Gating for linear attn
         g = self.pool_g(k)
-
-        # Manage attention mask (with padding)
-        if attention_mask is not None:
-            # attention_mask -> [batch, seq], v: [batch, seq, ...]
-            v = apply_linear_attention_mask(attention_mask, v)
 
         # Reshape for multi-head
         q = rearrange(q, "b n (h d) -> b h n d", h=self.num_heads)
@@ -148,16 +121,40 @@ class LiZAttention(nn.Module):
         v = repeat_kv(v, self.num_key_value_groups)
         g = repeat_kv(g, self.num_key_value_groups)
 
+        ## linear part
         q = torch.clamp(F.softmax(q, dim=-1), min=1e-6, max=1 - 1e-6)
         k = torch.clamp(F.softmax(k, dim=-1), min=1e-6, max=1 - 1e-6)
 
-        gate_norm = kwargs.get("gate_logit_normalizer", 16)
         g = F.logsigmoid(g) / gate_norm
         g = torch.clamp(g, min=-gate_norm, max=gate_norm)
 
         # Convert to float32 for numerical stability and get model dtype
-        model_dtype = q.dtype
         q, k, v, g = (x.to(torch.float32).contiguous() for x in (q, k, v, g))
+
+        return q, k, v, g
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        **kwargs,
+    ):
+        device = hidden_states.device
+        model_dtype = hidden_states.dtype
+        self.base_attn.to(device)
+
+        if self.training:
+            kwargs.pop("past_key_value", None)
+            kwargs["use_cache"] = False
+        else:
+            # Generation/Inference mode (incremental decoding)
+            if kwargs.get("past_key_value", None) is not None:
+                kwargs["use_cache"] = True
+            # Evaluation/Validation mode
+            else:
+                kwargs["use_cache"] = False
 
         # Retrieve recurrent state from cache (inference only)
         if kwargs["use_cache"]:
@@ -169,6 +166,18 @@ class LiZAttention(nn.Module):
             )
         else:
             recurrent_state = None
+
+        # Apply projections to hidden states
+        q, k, v, out_proj = self._apply_projections(hidden_states)
+
+        # Manage attention mask (with padding)
+        if attention_mask is not None:
+            # attention_mask -> [batch, seq], v: [batch, seq, ...]
+            v = apply_linear_attention_mask(attention_mask, v)
+
+        # Prepare inputs tensor for linear attn
+        gate_norm = kwargs.get("gate_logit_normalizer", 16)
+        q, k, v, g = self._prepare_attn_input(q, k, v, gate_norm)
 
         # Linear attention
         o_lin, recurrent_state = self.operator(
@@ -186,14 +195,13 @@ class LiZAttention(nn.Module):
         if kwargs["use_cache"]:
             self.linear_cache.update(self.layer_idx, recurrent_state=recurrent_state)
 
-        # If cache_implementation="static" -> truncated attention
-        if kwargs["use_cache"]:
-            hidden_states, attention_mask = truncate_attention_mask(
-                hidden_states, attention_mask, self.max_attn_length
-            )
         # Standard attention (mask and rotation is applied inside)
         base_attn_outputs = self.base_attn(
-            hidden_states, attention_mask=attention_mask, **kwargs
+            hidden_states,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            position_embeddings=position_embeddings,
+            **kwargs,
         )
         if isinstance(base_attn_outputs, tuple):
             if len(base_attn_outputs) == 3:
