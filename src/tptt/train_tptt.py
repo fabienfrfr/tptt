@@ -1,8 +1,6 @@
-"""Utilities to inject LiZA linear attention and manage mag_weight scheduling."""
-
 from transformers import TrainerCallback
 
-from .liza.memory_gate import LiZAttention
+from .modeling_tptt import LiZAttention
 
 
 class AdjustMaGWeightCallback(TrainerCallback):

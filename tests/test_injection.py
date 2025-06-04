@@ -1,13 +1,12 @@
 """Unit test for inject_linear_attention replacing a module with LiZAttention."""
 
-from src.tptt.injection import inject_linear_attention
-from src.tptt.liza.memory_gate import LiZAttention
+from src.tptt.modeling_tptt import LiZAttention, get_tptt_model
 
 
 def test_inject_linear_attention_replaces_module(dummy_decoder, dummy_config):
     """Test that inject_linear_attention replaces the target module with LiZAttention."""
     model = dummy_decoder()
-    injected, _ = inject_linear_attention(
+    injected, _ = get_tptt_model(
         model,
         dummy_config,
         liza_attention=LiZAttention,

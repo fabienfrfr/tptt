@@ -6,11 +6,11 @@ from unittest.mock import MagicMock
 import pytest
 import torch
 from torch import nn
+from transformers import AutoTokenizer, PretrainedConfig, PreTrainedModel
 
-from src.tptt.liza.mapping_func import AttentionOperator
-from src.tptt.liza.memory_gate import LiZAttention
-from src.tptt.modeling_tptt import TpttConfig, TpttModel
-from src.tptt.utils import LCache
+from src.tptt.configuration_tptt import TpttConfig
+from src.tptt.modeling_tptt import (AttentionOperator, LCache, LiZAttention,
+                                    TpttModel)
 
 
 @pytest.fixture
@@ -272,3 +272,36 @@ def dummy_tptt_model(dummy_tptt_config, dummy_model, dummy_tokenizer, cache, moc
         "src.tptt.injection.inject_linear_attention", return_value=(dummy_model, cache)
     )
     return TpttModel(dummy_tptt_config)
+
+
+class DummyConfig(PretrainedConfig):
+    def __init__(self):
+        super().__init__()
+        self.vocab_size = 50257
+
+
+class DummyModel(PreTrainedModel):
+    config_class = DummyConfig
+
+    def __init__(self, config=None):
+        if config is None:
+            config = DummyConfig()
+        super().__init__(config)
+        self._device = torch.device("cpu")
+
+    @property
+    def device(self):
+        return self._device
+
+    def forward(self, *args, **kwargs):
+        return torch.ones((1, 1))
+
+    def generate(self, **kwargs):
+        return torch.tensor([[1, 2, 3, 4]])
+
+
+@pytest.fixture
+def dummy_pipeline_components():
+    model = DummyModel()
+    tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    return model, tokenizer
