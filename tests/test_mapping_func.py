@@ -7,7 +7,7 @@ from unittest import mock
 
 import pytest
 
-from src.tptt.modeling_tptt import AttentionOperator, import_gla_ops
+from src.tptt.modeling_tptt import AttentionOperator, import_fla_ops
 
 
 def test_forward_shape(
@@ -58,7 +58,7 @@ def test_import_gla_ops(cuda_available, import_raises, expected):
             if "fla.ops.gla" in sys.modules:
                 del sys.modules["fla.ops.gla"]
 
-        result = import_gla_ops()
+        result = import_fla_ops()
 
         if expected is True:
             assert callable(result[0]) and callable(result[1])

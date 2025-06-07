@@ -3,13 +3,9 @@
 import pytest
 import torch
 
-from src.tptt.modeling_tptt import (
-    apply_linear_attention_mask,
-    get_valid_chunk_size,
-    match_dim,
-    repeat_kv,
-    truncate_attention_mask,
-)
+from src.tptt.modeling_tptt import (apply_linear_attention_mask,
+                                    get_valid_chunk_size, match_dim, repeat_kv,
+                                    truncate_attention_mask)
 
 
 def test_repeat_kv():

@@ -4,7 +4,7 @@
 </h3>
 
 **TPTT** is a modular Python library designed to inject efficient linearized attention (*LiZA*) mechanisms-such as *Memory as Gate* (described in [Titans](https://arxiv.org/html/2501.00663v1))-into pretrained transformers 🤗.
-It leverages the [flash-linear-attention](https://github.com/fla-org/flash-linear-attention) library for high-performance implementations, enabling scalable and memory-efficient attention computations.
+It leverages the [flash-linear-attention](https://github.com/fla-org/flash-linear-attention) library for high-performance implementations, enabling scalable and memory-efficient attention computations. (in progress 🔥)
 
 ---
 
@@ -25,7 +25,7 @@ cd tptt
 make install
 ```
 
-> **Note**: `flash-linear-attention` requires a CUDA-enabled GPU and a compatible PyTorch version.
+> **Note**: `flash-linear-attention` requires a CUDA-enabled GPU.
 
 ---
 
@@ -34,80 +34,152 @@ make install
 ```bash
 #!pip install -q flash-linear-attention
 !pip install -q bitsandbytes accelerate
-!pip install -q -U git+https://github.com/fabienfrfr/tptt@main
+!pip install -q -U git+https://github.com/fabienfrfr/tptt@main # PyPi soon
 ```
 
+#### *Titanesque* Import
+
+
 ```python
-import torch
-from transformers import AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling
-from datasets import load_dataset
+
+from transformer import AutoTokenizer, AutoModelForCausalLM
 import tptt
 
-# 1. Configure and instantiate the TPTT model (with LoRA for efficient fine-tuning)
-config = tptt.TpttConfig(base_model_name="TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T")
-model = tptt.TpttModel(config)
-model.add_lora()
+repo_id = "ffurfaro/Titans-Llama-3.2-1B"
 
-# 2. Prepare the tokenizer
-tokenizer = AutoTokenizer.from_pretrained(config.base_tokenizer_name)
+# Import model and tokenizer
+model_tptt = AutoModelForCausalLM.from_pretrained(repo_id, token=hf_token, trust_remote_code=True)
+tokenizer = AutoTokenizer.from_pretrained(repo_id)
+
+# Prepare for inference
+device = 0 if torch.cuda.is_available() else -1
+model.to(f"cuda:{device}" if device != -1 else "cpu")
+
+model_tptt.eval()
+pipe = tptt.TpttPipeline(model=model_tptt, tokenizer=tokenizer, device=device)
+
+# Generate text
+result = pipe("Bonjour, I'm Fabien Furfaro,", max_new_tokens=100)
+print(result[0]["generated_text"])
+
+```
+
+#### *Titanesque* Training
+
+
+```python
+
+from transformer import AutoTokenizer, AutoModelForCausalLM
+import tptt
+
+base_model_name="meta-llama/Llama-3.2-1B"
+
+
+##### Peft parameters
+
+target_modules = ["q_proj","k_proj","v_proj","o_proj"]  # Llama, Mistral, OLMo. Minimal : q_proj, v_proj
+
+lora_config = LoraConfig(
+    r=8,
+    lora_alpha=16,
+    lora_dropout=0.05,
+    bias="none",
+    task_type="CAUSAL_LM",
+    target_modules=target_modules,
+).to_dict()
+
+##### Transforming into Titans (Tptt)
+config = tptt.TpttConfig(
+    base_model_name=base_model_name,
+    lora_config=lora_config,
+)
+
+model = tptt.TpttModel(config, backbone=backbone)
+model.backbone.print_trainable_parameters()
+
+##### Preprocessing
+
+tokenizer = AutoTokenizer.from_pretrained(base_tokenizer_name, token=hf_token)
+# Ensure the tokenizer has a padding token for batching
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token or "[PAD]"
 
-# 3. Load and preprocess the dataset (Alpaca, 100 samples)
-raw_dataset = load_dataset("yahma/alpaca-cleaned")["train"].select(range(100))
+raw_dataset = load_dataset("yahma/alpaca-cleaned")["train"].select(range(N))
+
 def preprocess_fn(samples):
+    """
+    Tokenize the samples for causal language modeling.
+    Concatenate instruction, input, and output as needed.
+    """
     prompts = [
         f"{instr}\n{inp}" if inp else instr
         for instr, inp in zip(samples["instruction"], samples["input"])
     ]
+    # Optionally, append output for supervised fine-tuning
     prompts = [f"{p}\n{out}" for p, out in zip(prompts, samples["output"])]
-    tokens = tokenizer(prompts, truncation=True, max_length=256, padding="max_length", return_attention_mask=True)
+    tokens = tokenizer(
+        prompts,
+        truncation=True,
+        max_length=512, #256,
+        padding="longest", #padding= "max_length",
+        return_attention_mask=True,
+    )
     tokens["labels"] = tokens["input_ids"].copy()
     return tokens
-tokenized_dataset = raw_dataset.map(preprocess_fn, batched=True, remove_columns=raw_dataset.column_names)
 
-# 4. Data collator for language modeling
-data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+tokenized_dataset = raw_dataset.map(
+    preprocess_fn, batched=True, remove_columns=raw_dataset.column_names
+)
 
-# 5. Training arguments
+# Tokenize the dataset in batches and remove original columns
+tokenized_dataset = raw_dataset.map(
+    preprocess_fn, batched=True, remove_columns=raw_dataset.column_names)
+
+data_collator = DataCollatorForLanguageModeling(
+    tokenizer=tokenizer,
+    mlm=False,
+)
+
+# Define HuggingFace TrainingArguments for reproducible training
 training_args = TrainingArguments(
     output_dir="./tptt_output",
-    per_device_train_batch_size=4,
-    num_train_epochs=3,
-    learning_rate=5e-4,
-    fp16=True,
+    per_device_train_batch_size=4, # per_device_train_batch_size * N GPU --> VRAM limit risk 
+    num_train_epochs=EPOCH,
+    learning_rate=  5e-4,
+    max_grad_norm=1.0, # gradiant clipping
+    fp16=True,  # Use mixed precision if supported by hardware
+    ddp_find_unused_parameters=False, 
     logging_steps=5,
+    save_total_limit=2,  # Limit HDD
+    seed=42,
     save_strategy="epoch",
-    report_to="none",  # disables TensorBoard for brevity
+    report_to="tensorboard",
 )
 
-# 6. (Optional) MaG/Liza callback for dynamic weight adjustment
+# LiZA MaG callback
+initial_weight=0.01,
+final_weight=0.5,
+transition_step=100,
 liza_callback = tptt.AdjustMaGWeightCallback(
-    model, initial_weight=0.01, final_weight=0.5, transition_step=100
-)
+            model,
+            initial_weight=initial_weight,
+            final_weight=final_weight,
+            transition_step=transition_step,)
 
-# 7. HuggingFace Trainer setup
 trainer = Trainer(
     model=model,
     args=training_args,
     train_dataset=tokenized_dataset,
     data_collator=data_collator,
+    processing_class=tokenizer,
     callbacks=[liza_callback],
 )
 
-# 8. Train the model
 trainer.train()
 
-# 9. Prepare for inference
-device = 0 if torch.cuda.is_available() else -1
-model.to(f"cuda:{device}" if device != -1 else "cpu")#.eval()
-pipe = tptt.TpttPipeline(model=model.backbone, tokenizer=tokenizer, device=device)
-
-# 10. Generate text
-result = pipe("Once upon a time,", max_new_tokens=100)
-print(result[0]["generated_text"])
-
 ```
+
+
 
 ---
 
@@ -125,6 +197,7 @@ print(result[0]["generated_text"])
 - PyTorch
 - einops
 - Transformers
+- Peft (optional)
 - flash-linear-attention (optional)
 
 See `requirements.txt` for the full list.

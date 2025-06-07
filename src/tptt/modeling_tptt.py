@@ -1,21 +1,25 @@
 """This module implements the TPTT model with linear attention (LiZA) and LoRA support."""
 
-import re
 import os
+import re
 import shutil
 from typing import Dict, List, Optional
 
 import torch
 import torch.nn.functional as F
 from einops import rearrange
-from peft import PeftConfig, PeftModel
+from peft import LoraConfig, get_peft_model
+from safetensors import safe_open
+from huggingface_hub import hf_hub_download, list_repo_files
 from torch import nn
 from transformers import AutoModelForCausalLM, DynamicCache, PreTrainedModel
 from transformers.configuration_utils import PretrainedConfig
 
+from .configuration_tptt import TpttConfig
 
-def import_gla_ops():
 
+def import_fla_ops():
+    """flash linear attention"""
     if torch.cuda.is_available():
         try:
             from fla.ops.gla import fused_chunk_gla, fused_recurrent_gla
@@ -26,9 +30,7 @@ def import_gla_ops():
     return None, None
 
 
-fused_chunk_gla, fused_recurrent_gla = import_gla_ops()
-
-from .configuration_tptt import TpttConfig
+fused_chunk_gla, fused_recurrent_gla = import_fla_ops()  # TODO: add all ops
 
 
 class LCache:
@@ -369,20 +371,48 @@ class TpttModel(PreTrainedModel):
     def __init__(
         self,
         config: TpttConfig,
-        backbone: PreTrainedModel,
-        liza_injected: bool = False,
+        **kwargs,
     ):
         """
         Initialize TpttModel with a given config and backbone.
         Injects LiZA attention modules into the backbone.
         """
-        super().__init__(config)
-        self.config = config
-        self.backbone = backbone
+        super().__init__(config, **kwargs)
+        repo_or_path = getattr(config, "_base_path", None) or config._name_or_path
+
+        # 1. Load backbone
+        backbone = AutoModelForCausalLM.from_pretrained(
+            config.base_model_name, **kwargs
+        )
+
+        # 2. Inject LiZA attention
         self.linear_cache = LCache()
-        if not liza_injected:  # for import from_pretrained
-            self.backbone, self.linear_cache = self.inject_liza_attention(
-                self.backbone, self.config, self.linear_cache
+        self.backbone, self.linear_cache = self.inject_liza_attention(
+            backbone, config, self.linear_cache
+        )
+        # 3. Apply LoRA if present of configured
+        if config.lora_config is not None:
+            lora_config_obj = LoraConfig(**config.lora_config)
+            self.backbone = get_peft_model(self.backbone, lora_config_obj)
+            if repo_or_path:
+                self.load_peft_safetensors(
+                    repo_or_path, token=kwargs.get("token", None)
+                )
+
+    def load_peft_safetensors(self, src, token=None):
+        # src: local dir or repo_id
+        fname = "adapter_model.safetensors"
+        if os.path.isdir(src):
+            path = os.path.join(src, fname)
+            if not os.path.exists(path):
+                return
+        else:
+            if fname not in list_repo_files(src, token=token):
+                return
+            path = hf_hub_download(src, fname, token=token)
+        with safe_open(path, framework="pt") as f:
+            self.backbone.load_state_dict(
+                {k: f.get_tensor(k) for k in f.keys()}, strict=False
             )
 
     @staticmethod
@@ -431,53 +461,21 @@ class TpttModel(PreTrainedModel):
         )
 
     def save_pretrained(self, path: str, **kwargs):
-        """
-        Save model weights, config, and source code to the given path.
-        Ensures all necessary .py files are included for Hugging Face Hub compatibility.
-        """
+        """Save model weights, config, and source code to the given path."""
+        super().save_pretrained(path, **kwargs)  # save config and model
+        # Save peft safetensor and delete is config (make error otherwise)
         self.backbone.save_pretrained(path, **kwargs)
-        self.config.save_pretrained(path)
-        super().save_pretrained(path, **kwargs)
-        # Copy all .py files from source directory (modeling, configuration, etc.)
-        src_dir = os.path.dirname(os.path.abspath(__file__))
+        adapter_config_path = os.path.join(path, "adapter_config.json")
+        if os.path.exists(adapter_config_path):
+            os.remove(adapter_config_path)
+        # Copy all .py files from source directory (trust_remote_code)
+        src_dir = os.path.dirname(
+            os.path.abspath(__file__)
+        )  # important for package location finding
         for fname in os.listdir(src_dir):
-            src_file = os.path.join(src_dir, fname)
-            dst_file = os.path.join(path, fname)
+            src_file, dst_file = os.path.join(src_dir, fname), os.path.join(path, fname)
             if os.path.isfile(src_file) and fname.endswith(".py"):
                 shutil.copy2(src_file, dst_file)
-
-    @classmethod
-    def from_pretrained(cls, path: str, **kwargs):
-        """
-        Load TPTT model from a directory.
-        Inject LiZA attention before applying LoRA (if present).
-        """
-        config = TpttConfig.from_pretrained(path)
-        try:
-            peft_config = PeftConfig.from_pretrained(path)
-            lora_exists = True
-        except Exception:
-            lora_exists = False
-
-        # 1. Load backbone
-        backbone = AutoModelForCausalLM.from_pretrained(
-            (
-                peft_config.base_model_name_or_path
-                if lora_exists
-                else config.base_model_name
-            ),
-            **kwargs,
-        )
-        # 2. Inject LiZA attention
-        linear_cache = LCache()
-        backbone, linear_cache = cls.inject_liza_attention(
-            backbone, config, linear_cache
-        )
-        # 3. Apply LoRA if present
-        if lora_exists:
-            backbone = PeftModel.from_pretrained(backbone, path)
-        # 4. Return TPTT model
-        return cls(config, backbone=backbone, liza_injected=True)
 
 
 TpttModel.register_for_auto_class("AutoModelForCausalLM")
