@@ -217,7 +217,7 @@ class LiZAttention(nn.Module):
             recurrent_state=recurrent_state,
         )
         o_lin = rearrange(o_lin, "b h n d -> b n (h d)").to(tensor_dtype)
-         = out_proj(o_lin)
+        o_lin = out_proj(o_lin)
         # Ensure stability
         o_lin = torch.clamp(o_lin, min=-1e4, max=1e4)
 
@@ -297,7 +297,7 @@ class LiZAttention(nn.Module):
         gate_norm = kwargs.get("gate_logit_normalizer", 16)
         q, k, v, g = self._prepare_attn_input(q, k, v, gate_norm)
 
-        # Process linear attn from mask 
+        # Process linear attn from mask
         o_lin = self._process_linear_attn(q, k, v, g, out_proj, tensor_dtype, kwargs)
 
         # Process self attn with truncation
