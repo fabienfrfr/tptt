@@ -162,6 +162,10 @@ class LiZAttention(nn.Module):
             out_proj = base_attn.c_proj
         else:
             raise ValueError("Unsupported attention module: cannot find projections.")
+        # Ensure stability
+        q = torch.clamp(q, min=-1e4, max=1e4)
+        k = torch.clamp(k, min=-1e4, max=1e4)
+        v = torch.clamp(v, min=-1e4, max=1e4)
         return q, k, v, out_proj
 
     def _prepare_attn_input(self, q, k, v, gate_norm):
@@ -213,7 +217,9 @@ class LiZAttention(nn.Module):
             recurrent_state=recurrent_state,
         )
         o_lin = rearrange(o_lin, "b h n d -> b n (h d)").to(tensor_dtype)
-        o_lin = out_proj(o_lin)
+         = out_proj(o_lin)
+        # Ensure stability
+        o_lin = torch.clamp(o_lin, min=-1e4, max=1e4)
 
         # Save recurrent state
         if kwargs["use_cache"]:
@@ -291,7 +297,7 @@ class LiZAttention(nn.Module):
         gate_norm = kwargs.get("gate_logit_normalizer", 16)
         q, k, v, g = self._prepare_attn_input(q, k, v, gate_norm)
 
-        # Process linear attn from mask
+        # Process linear attn from mask 
         o_lin = self._process_linear_attn(q, k, v, g, out_proj, tensor_dtype, kwargs)
 
         # Process self attn with truncation
@@ -312,6 +318,8 @@ class LiZAttention(nn.Module):
             left_trunc = min(o_lin.shape[1], o_base.shape[1])
             o_lin, o_base = o_lin[:, -left_trunc:], o_base[:, -left_trunc:]
         out = self.mag_weight * o_lin + (1 - self.mag_weight) * o_base
+        # Ensure full stability
+        out = torch.clamp(out, min=-1e4, max=1e4)
 
         # Return output following transformer convention
         if expected_attn_mode == 3:
@@ -567,13 +575,17 @@ class AttentionOperator(nn.Module):
             # Eq. (11): Lower-triangular matrix T (with -KβK^T off-diagonal, 1 on diagonal)
             # T = I - tril(KβK^T, -1)
             t_matrix = -(k_beta @ k.transpose(-2, -1)).tril(-1)
+            t_matrix = torch.clamp(t_matrix, min=-1e4, max=1e4)
             t_matrix = t_matrix + torch.eye(
                 q.shape[-2], device=q.device, dtype=q.dtype
             ).unsqueeze(0).unsqueeze(0)
 
             # Eq. (11): W = T Kβ, U = T Vβ
             w_matrix = t_matrix @ k_beta
+            w_matrix = torch.clamp(w_matrix, min=-1e4, max=1e4)
+
             u_matrix = t_matrix @ v_beta
+            u_matrix = torch.clamp(u_matrix, min=-1e4, max=1e4)
 
             # Eq. (12): u_i = U - W S (S = state)
             u_i = u_matrix - torch.matmul(w_matrix, state)
@@ -589,6 +601,7 @@ class AttentionOperator(nn.Module):
 
             # Eq. (12): state update: S_new = S + K^T u_i
             new_state = state + torch.matmul(k.transpose(-2, -1), u_i)
+            new_state = torch.clamp(new_state, min=-1e4, max=1e4)
 
             # Eq. (12): output = intra + inter
             return o_intra + o_inter, new_state
