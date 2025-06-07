@@ -264,6 +264,8 @@ class LiZAttention(nn.Module):
         else:
             o_base = base_attn_outputs
             attn_weights, present_key_value, expected_attn_mode = None, None, 1
+        # Ensure stability
+        o_base = torch.clamp(o_base, min=-1e4, max=1e4)
         return o_base, attn_weights, present_key_value, expected_attn_mode
 
     def forward(
@@ -319,7 +321,7 @@ class LiZAttention(nn.Module):
             o_lin, o_base = o_lin[:, -left_trunc:], o_base[:, -left_trunc:]
         out = self.mag_weight * o_lin + (1 - self.mag_weight) * o_base
         # Ensure full stability
-        out = torch.clamp(out, min=-1e4, max=1e4)
+        out = torch.clamp(out, min=-1e3, max=1e3)
 
         # Return output following transformer convention
         if expected_attn_mode == 3:
