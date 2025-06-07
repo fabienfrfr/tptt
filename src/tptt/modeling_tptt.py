@@ -460,6 +460,10 @@ class TpttModel(PreTrainedModel):
             input_ids=input_ids, attention_mask=attention_mask, labels=labels, **kwargs
         )
 
+    def generate(self, *args, **kwargs):
+        # Delegate the generate call to the backbone model, which supports generation
+        return self.backbone.generate(*args, **kwargs)
+
     def save_pretrained(self, path: str, **kwargs):
         """Save model weights, config, and source code to the given path."""
         super().save_pretrained(path, **kwargs)  # save config and model

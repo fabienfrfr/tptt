@@ -53,7 +53,7 @@ tokenizer = AutoTokenizer.from_pretrained(repo_id)
 
 # Prepare for inference
 device = 0 if torch.cuda.is_available() else -1
-model.to(f"cuda:{device}" if device != -1 else "cpu")
+model_tptt.to(f"cuda:{device}" if device != -1 else "cpu")
 
 model_tptt.eval()
 pipe = tptt.TpttPipeline(model=model_tptt, tokenizer=tokenizer, device=device)
