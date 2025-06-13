@@ -95,7 +95,7 @@ class LiZAttention(nn.Module):
         base_attn: nn.Module,
         layer_idx: int,
         base_config,  # Backbone Config
-        linear_cache: LCache = None,
+        linear_cache: Optional[LCache] = None,
         operator_mode: str = "delta_rule",
         max_self_attn_length: int = 2048,
         mag_weight: float = 0.5,
@@ -343,7 +343,7 @@ def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-a
     base_config: PretrainedConfig,  # ou LlamaConfig, MistralConfig, etc.
     liza_attention: LiZAttention,
     target_modules: list,
-    linear_cache: LCache = None,
+    linear_cache: Optional[LCache] = None,
     operator_mode: str = "delta_rule",
     mag_weight: float = 0.5,
     max_chunk_size: int = 64,
@@ -579,8 +579,10 @@ class AttentionOperator(nn.Module):
         # Output buffer
         output = torch.empty_like(q_chunks)
         # State: [batch, num_heads, head_dim, head_dim]
-        if initial_state is not None:
-            state = initial_state
+        expect_state_shape = (batch_size, num_heads, head_dim, head_dim)
+        if initial_state is not None and initial_state.shape == expect_state_shape:
+            # Use provided initial state
+            state = initial_state.to(device=query.device, dtype=query.dtype)
         else:
             state = torch.zeros(
                 batch_size,
