@@ -53,7 +53,7 @@ tokenizer = AutoTokenizer.from_pretrained(repo_id)
 
 # Prepare for inference
 device = 0 if torch.cuda.is_available() else -1
-model.to(f"cuda:{device}" if device != -1 else "cpu")
+model_tptt.to(f"cuda:{device}" if device != -1 else "cpu")
 
 model_tptt.eval()
 pipe = tptt.TpttPipeline(model=model_tptt, tokenizer=tokenizer, device=device)
@@ -94,7 +94,7 @@ config = tptt.TpttConfig(
     lora_config=lora_config,
 )
 
-model = tptt.TpttModel(config, backbone=backbone)
+model = tptt.TpttModel(config, backbone=backbone) #     torch_dtype=torch.bfloat16, # for model trained in float32 
 model.backbone.print_trainable_parameters()
 
 ##### Preprocessing
@@ -147,7 +147,7 @@ training_args = TrainingArguments(
     num_train_epochs=EPOCH,
     learning_rate=  5e-4,
     max_grad_norm=1.0, # gradiant clipping
-    fp16=True,  # Use mixed precision if supported by hardware
+    bf16=True,  # Use mixed precision if supported by hardware (underflow gradient)
     ddp_find_unused_parameters=False, 
     logging_steps=5,
     save_total_limit=2,  # Limit HDD

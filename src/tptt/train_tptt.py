@@ -1,3 +1,7 @@
+"""
+Author : Fabien FURFARO
+"""
+
 from transformers import TrainerCallback
 
 from .modeling_tptt import LiZAttention

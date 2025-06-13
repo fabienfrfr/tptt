@@ -1,6 +1,6 @@
 __version__ = "0.1.0"
 
-from .configuration_tptt import TpttConfig
+from .configuration_tptt import TpttConfig, generate_model_card
 from .modeling_tptt import (AttentionOperator, LCache, LiZAttention, TpttModel,
                             get_tptt_model)
 from .pipeline_tptt import TpttPipeline
@@ -15,4 +15,5 @@ __all__ = [
     "LCache",
     "AttentionOperator",
     "LiZAttention",
+    "generate_model_card",
 ]

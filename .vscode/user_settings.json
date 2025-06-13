@@ -1,0 +1,18 @@
+{
+    // My basics settings.
+    "update.mode": "none",
+    "update.enableWindowsBackgroundUpdates": false,
+    "update.showReleaseNotes": false,
+    "python.terminal.launchArgs": [
+        "-m",
+        "IPython"
+    ],
+    "editor.formatOnSave": true,
+    "makefile.configureOnOpen": true,
+    "remote.autoForwardPortsSource": "hybrid",
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter"
+    },
+    "database-client.autoSync": true,
+    "git.enableSmartCommit": true
+}

@@ -1,5 +1,9 @@
-"""This module implements the TPTT model with linear attention (LiZA) and LoRA support."""
+"""
+This module implements the TPTT model with linear attention (LiZA) and LoRA support.
+Author : Fabien FURFARO
+"""
 
+import logging
 import os
 import re
 import shutil
@@ -8,9 +12,9 @@ from typing import Dict, List, Optional
 import torch
 import torch.nn.functional as F
 from einops import rearrange
+from huggingface_hub import hf_hub_download, list_repo_files
 from peft import LoraConfig, get_peft_model
 from safetensors import safe_open
-from huggingface_hub import hf_hub_download, list_repo_files
 from torch import nn
 from transformers import AutoModelForCausalLM, DynamicCache, PreTrainedModel
 from transformers.configuration_utils import PretrainedConfig
@@ -31,6 +35,8 @@ def import_fla_ops():
 
 
 fused_chunk_gla, fused_recurrent_gla = import_fla_ops()  # TODO: add all ops
+
+logger = logging.getLogger(__name__)  # monitoring
 
 
 class LCache:
@@ -162,6 +168,10 @@ class LiZAttention(nn.Module):
             out_proj = base_attn.c_proj
         else:
             raise ValueError("Unsupported attention module: cannot find projections.")
+        # Ensure stability
+        q = torch.clamp(q, min=-1e4, max=1e4)
+        k = torch.clamp(k, min=-1e4, max=1e4)
+        v = torch.clamp(v, min=-1e4, max=1e4)
         return q, k, v, out_proj
 
     def _prepare_attn_input(self, q, k, v, gate_norm):
@@ -214,6 +224,8 @@ class LiZAttention(nn.Module):
         )
         o_lin = rearrange(o_lin, "b h n d -> b n (h d)").to(tensor_dtype)
         o_lin = out_proj(o_lin)
+        # Ensure stability (o_lin = soft_clamp(o_lin) ?)
+        o_lin = torch.clamp(o_lin, min=-1e4, max=1e4)
 
         # Save recurrent state
         if kwargs["use_cache"]:
@@ -258,6 +270,8 @@ class LiZAttention(nn.Module):
         else:
             o_base = base_attn_outputs
             attn_weights, present_key_value, expected_attn_mode = None, None, 1
+        # Ensure stability
+        o_base = torch.clamp(o_base, min=-1e4, max=1e4)
         return o_base, attn_weights, present_key_value, expected_attn_mode
 
     def forward(
@@ -312,6 +326,8 @@ class LiZAttention(nn.Module):
             left_trunc = min(o_lin.shape[1], o_base.shape[1])
             o_lin, o_base = o_lin[:, -left_trunc:], o_base[:, -left_trunc:]
         out = self.mag_weight * o_lin + (1 - self.mag_weight) * o_base
+        # Ensure stability
+        out = torch.clamp(out, min=-1e4, max=1e4)
 
         # Return output following transformer convention
         if expected_attn_mode == 3:
@@ -380,7 +396,7 @@ class TpttModel(PreTrainedModel):
         super().__init__(config, **kwargs)
         repo_or_path = getattr(config, "_base_path", None) or config._name_or_path
 
-        # 1. Load backbone
+        # 1. Load backbone TODO : support no model.safetensors
         backbone = AutoModelForCausalLM.from_pretrained(
             config.base_model_name, **kwargs
         )
@@ -390,7 +406,7 @@ class TpttModel(PreTrainedModel):
         self.backbone, self.linear_cache = self.inject_liza_attention(
             backbone, config, self.linear_cache
         )
-        # 3. Apply LoRA if present of configured
+        # 3. Apply LoRA if present and configured
         if config.lora_config is not None:
             lora_config_obj = LoraConfig(**config.lora_config)
             self.backbone = get_peft_model(self.backbone, lora_config_obj)
@@ -398,6 +414,8 @@ class TpttModel(PreTrainedModel):
                 self.load_peft_safetensors(
                     repo_or_path, token=kwargs.get("token", None)
                 )
+        # 4. Force tie weights of lm_head to embedding
+        self._retie_weights_after_load(**kwargs)
 
     def load_peft_safetensors(self, src, token=None):
         # src: local dir or repo_id
@@ -460,22 +478,51 @@ class TpttModel(PreTrainedModel):
             input_ids=input_ids, attention_mask=attention_mask, labels=labels, **kwargs
         )
 
+    def generate(self, *args, **kwargs):
+        # Delegate the generate call to the backbone model, which supports generation
+        return self.backbone.generate(*args, **kwargs)
+
     def save_pretrained(self, path: str, **kwargs):
         """Save model weights, config, and source code to the given path."""
-        super().save_pretrained(path, **kwargs)  # save config and model
-        # Save peft safetensor and delete is config (make error otherwise)
+        super().save_pretrained(path, **kwargs)
+
+        # 1. Save PEFT weights and clean adapter config
+        self._save_peft_weights(path, **kwargs)
+        # 2. Copy Python files for trust_remote_code
+        self._copy_source_files(path)
+
+    def _save_peft_weights(self, path: str, **kwargs):
+        """Save PEFT weights and remove redundant adapter config."""
         self.backbone.save_pretrained(path, **kwargs)
         adapter_config_path = os.path.join(path, "adapter_config.json")
         if os.path.exists(adapter_config_path):
             os.remove(adapter_config_path)
-        # Copy all .py files from source directory (trust_remote_code)
-        src_dir = os.path.dirname(
-            os.path.abspath(__file__)
-        )  # important for package location finding
+
+    def _copy_source_files(self, path: str):
+        """Copy all .py files from package directory for trust_remote_code."""
+        src_dir = os.path.dirname(os.path.abspath(__file__))
         for fname in os.listdir(src_dir):
-            src_file, dst_file = os.path.join(src_dir, fname), os.path.join(path, fname)
-            if os.path.isfile(src_file) and fname.endswith(".py"):
-                shutil.copy2(src_file, dst_file)
+            if fname.endswith(".py"):
+                src = os.path.join(src_dir, fname)
+                dst = os.path.join(path, fname)
+                shutil.copy2(src, dst)
+
+    def _retie_weights_after_load(self, **kwargs):
+        """Re-link lm_head after loading external weights."""
+        embed_weight = find_embedding_weight(self.backbone)
+        if embed_weight is not None and hasattr(self.backbone, "lm_head"):
+            if kwargs.get("tie_word_embeddings", True):
+                self.backbone.lm_head.weight = embed_weight  # share weights
+                logger.info("Weights of lm_head have been shared with embedding.")
+            else:
+                self.backbone.lm_head.weight = nn.Parameter(embed_weight.clone())
+                logger.info("Weights of lm_head have been cloned from the embedding.")
+
+    @classmethod
+    def from_pretrained(cls, *args, **kwargs):
+        model = super().from_pretrained(*args, **kwargs)
+        model._retie_weights_after_load(**kwargs)
+        return model
 
 
 TpttModel.register_for_auto_class("AutoModelForCausalLM")
@@ -563,13 +610,17 @@ class AttentionOperator(nn.Module):
             # Eq. (11): Lower-triangular matrix T (with -KβK^T off-diagonal, 1 on diagonal)
             # T = I - tril(KβK^T, -1)
             t_matrix = -(k_beta @ k.transpose(-2, -1)).tril(-1)
+            t_matrix = torch.clamp(t_matrix, min=-1e4, max=1e4)
             t_matrix = t_matrix + torch.eye(
                 q.shape[-2], device=q.device, dtype=q.dtype
             ).unsqueeze(0).unsqueeze(0)
 
             # Eq. (11): W = T Kβ, U = T Vβ
             w_matrix = t_matrix @ k_beta
+            w_matrix = torch.clamp(w_matrix, min=-1e4, max=1e4)
+
             u_matrix = t_matrix @ v_beta
+            u_matrix = torch.clamp(u_matrix, min=-1e4, max=1e4)
 
             # Eq. (12): u_i = U - W S (S = state)
             u_i = u_matrix - torch.matmul(w_matrix, state)
@@ -585,6 +636,7 @@ class AttentionOperator(nn.Module):
 
             # Eq. (12): state update: S_new = S + K^T u_i
             new_state = state + torch.matmul(k.transpose(-2, -1), u_i)
+            new_state = torch.clamp(new_state, min=-1e4, max=1e4)
 
             # Eq. (12): output = intra + inter
             return o_intra + o_inter, new_state
@@ -642,6 +694,25 @@ def extract_layer_idx(module_name: str) -> int:
     if match:
         return int(match.group(1))
     return -1
+
+
+def find_embedding_weight(module):
+    """Find the embedding weight in a model module."""
+    for _, child in module.named_modules():
+        if hasattr(child, "embed_tokens") and hasattr(child.embed_tokens, "weight"):
+            return child.embed_tokens.weight
+        if hasattr(child, "token_embeddings") and hasattr(
+            child.token_embeddings, "weight"
+        ):
+            return child.token_embeddings.weight
+    return None
+
+
+def soft_clamp(x, min_val=-1e4, max_val=1e4):
+    """Differentiable clamping for stability"""
+    scale = (max_val - min_val) / 2
+    center = (max_val + min_val) / 2
+    return torch.tanh((x - center) / scale) * scale + center
 
 
 def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:

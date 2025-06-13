@@ -5,7 +5,7 @@ import torch
 
 from src.tptt.modeling_tptt import (apply_linear_attention_mask,
                                     get_valid_chunk_size, match_dim, repeat_kv,
-                                    truncate_attention_mask)
+                                    soft_clamp, truncate_attention_mask)
 
 
 def test_repeat_kv():
@@ -13,6 +13,19 @@ def test_repeat_kv():
     x = torch.randn(2, 4, 8, 64)
     repeated = repeat_kv(x, 2)
     assert repeated.shape == (2, 8, 8, 64)
+
+
+@pytest.mark.parametrize(
+    "x,min_val,max_val",
+    [
+        (torch.tensor([0.0, 1.0, -1.0]), -1e4, 1e4),
+        (torch.tensor([1e5, -1e5]), -1e4, 1e4),
+        (torch.tensor([0.0, 50.0, 100.0]), 0, 100),
+    ],
+)
+def test_soft_clamp_parametrize(x, min_val, max_val):
+    result = soft_clamp(x, min_val=min_val, max_val=max_val)
+    assert torch.all(result <= max_val) and torch.all(result >= min_val)
 
 
 @pytest.mark.parametrize(
