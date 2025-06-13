@@ -7,15 +7,17 @@ import torch
 # from src.tptt.modeling_tptt import TpttModel
 from src.tptt.pipeline_tptt import TpttPipeline
 
-
-def test_tptt_config_default_values(dummy_tptt_config):
-    """Test default values of TpttConfig."""
-    config = dummy_tptt_config
-    assert config.model_name == "test-model"
-    assert "self_attn" in config.target_modules_names
-    assert config.operator_mode == "delta_rule"
-    assert config.mag_weight == 0.5
-    assert config.max_chunk_size == 64
+# Patching is not used, high RAM usage in CI...
+# @patch("transformers.AutoConfig.from_pretrained")
+# def test_tptt_config_default_values(dummy_tptt_config):
+#     """Test default values of TpttConfig."""
+#     dummy_tptt_config.return_value.to_dict.return_value = {"model_name": "test-model"}
+#     config = dummy_tptt_config
+#     assert config.model_name == "test-model"
+#     assert "self_attn" in config.target_modules_names
+#     assert config.operator_mode == "delta_rule"
+#     assert config.mag_weight == 0.5
+#     assert config.max_chunk_size == 64
 
 
 # @patch("src.tptt.modeling_tptt.AutoModelForCausalLM.from_pretrained")
