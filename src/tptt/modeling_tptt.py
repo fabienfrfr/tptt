@@ -397,14 +397,15 @@ class TpttModel(PreTrainedModel):
         repo_or_path = getattr(config, "_base_path", None) or config._name_or_path
 
         # 1. Load backbone TODO : support no model.safetensors
-        backbone = AutoModelForCausalLM.from_pretrained(
+        self.backbone = AutoModelForCausalLM.from_pretrained(
             config.base_model_name, **kwargs
         )
+        self._retie_weights_after_load(**kwargs)  # Force lm tie weights
 
         # 2. Inject LiZA attention
         self.linear_cache = LCache()
         self.backbone, self.linear_cache = self.inject_liza_attention(
-            backbone, config, self.linear_cache
+            self.backbone, config, self.linear_cache
         )
         # 3. Apply LoRA if present and configured
         if config.lora_config is not None:
@@ -414,8 +415,6 @@ class TpttModel(PreTrainedModel):
                 self.load_peft_safetensors(
                     repo_or_path, token=kwargs.get("token", None)
                 )
-        # 4. Force tie weights of lm_head to embedding
-        self._retie_weights_after_load(**kwargs)
 
     def load_peft_safetensors(self, src, token=None):
         # src: local dir or repo_id
