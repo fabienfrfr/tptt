@@ -5,3 +5,12 @@ __pycache__/
 .env
 .ipynb_checkpoints/
 .coverage
+
+*.log
+*.out
+*.fls
+*.aux
+*.synctex.gz
+*.fdb_latexmk
+*.bbl
+*.blg
