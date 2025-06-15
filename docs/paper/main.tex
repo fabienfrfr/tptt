@@ -34,6 +34,10 @@ The success of transformer-based large language models (LLMs)~\cite{vaswani2017a
 
 To address these challenges, recent research has explored several directions. Efficient attention mechanisms~\cite{katharopoulos2020transformers, yang2024parallelizing} have been proposed to reduce the complexity of self-attention from quadratic to linear or near-linear, making it more tractable for long sequences. Recurrent architectures and internal memory mechanisms~\cite{qin2024advancements, behrouz2025titans} have also been developed to enhance the model's ability to capture long-range dependencies, drawing inspiration from cognitive memory in biological systems rather than hardware memory. Additionally, parameter-efficient fine-tuning approaches such as LoRA~\cite{hu2021lora} allow for the adaptation of large pretrained models to new tasks without the need for full retraining.
 
+\section{Related Work}
+
+
+
 Despite these advances, most existing methods require significant architectural modifications or training from scratch, which limits their applicability to already pretrained models. For example, solutions like FlashAttention~\cite{dao2023flashattention} and Mamba~\cite{gu2024mamba} focus on efficient architectures, while others such as LoLCat~\cite{zhang2024lolcat} and Liger~\cite{lan2025liger} convert standard attention to linearized forms; notably, Liger exploits similar properties to those leveraged in this work, but does not rely on explicit linearization injection.
 
 In this work, we introduce TPTT (Transforming Pretrained Transformer into Titans), a framework that transforms pretrained transformer models into more efficient and scalable architectures by incorporating linearized attention mechanisms and advanced internal memory augmentation. TPTT leverages techniques such as Memory as Gate (MaG) and mixed linearized attention (LiZA), drawing inspiration from the Titans architecture~\cite{behrouz2025titans}. Our approach is fully compatible with existing frameworks and enables rapid adaptation of any causal LLM to long-context tasks via parameter-efficient fine-tuning with LoRA~\cite{hu2021lora}, without requiring full retraining. The goal is to unlock the potential of already trained models by equipping them with memory-augmented capabilities through lightweight adaptation.
@@ -65,7 +69,7 @@ where $\alpha \in [0,1]$ is adapted during training. This allows the model to le
 
 \subsection{Parallel Delta Rule Modeling}
 
-The recurrent update of internal memory states can be formulated in two ways, following~\cite{yang2024parallelizing}:
+In this works, the feature mapping function of linear attention is approximated by DeltaNet~\cite{yang2024parallelizing}. The recurrent update of internal memory states can be formulated in two ways, following:
 \begin{itemize}
     \item \textbf{Closed Form (intra-chunk):}
     \begin{equation}
@@ -88,14 +92,12 @@ Our approach injects linearized attention and memory augmentation modules into p
     \item \textbf{Modification of Attention Layers:} These layers are replaced or extended with the proposed \texttt{LiZAttention} module, which implements both linear and softmax attention with MaG.
     \item \textbf{Training and Fine-Tuning:} The modified model is fine-tuned using parameter-efficient methods such as LoRA~\cite{hu2021lora}, ensuring optimal adaptation to the new mechanisms without full retraining.
 \end{enumerate}
-This procedure enables the transformation of any causal pretrained LLM into a memory-augmented, efficient architecture with minimal overhead.
+This procedure enables the transformation of any causal pretrained LLM into a memory-augmented, efficient architecture with minimal overhead, that without any new layers.
 
-
-\section{Algorithm Overview}
 
 \subsection{LiZAttention Module}
 
-The \texttt{LiZAttention} module is a core component of the TPTT architecture, designed to synergistically combine linearized attention and standard (softmax) attention mechanisms. This hybrid approach leverages the computational efficiency of linear attention while retaining the expressivity of vanilla attention. To support long-context inference, \texttt{LiZAttention} maintains a cache of intermediate states and implements a sliding window mechanism for efficient internal memory management~\cite{lucidrains2020linearattention, katharopoulos2020transformers}.
+The \texttt{LiZAttention} module is a core component of the TPTT architecture, designed to synergistically combine linearized attention and standard (softmax) attention mechanisms. This hybrid approach leverages the computational efficiency of linear attention while retaining the expressivity of vanilla attention. To support long-context inference, \texttt{LiZAttention} maintains a cache of intermediate states and implements a recurrent information mechanism for efficient internal memory management~\cite{lucidrains2020linearattention, katharopoulos2020transformers}.
 
 \begin{algorithm}[H]
 \caption{LiZAttention Forward Pass}
@@ -111,7 +113,7 @@ The \texttt{LiZAttention} module is a core component of the TPTT architecture, d
 \State \textbf{Linear Attention:}
     \Statex \hspace{1em} Compute linear attention output $o_{\mathrm{lin}}$ using a feature map $\phi$:
     \Statex \hspace{1em} $o_{\mathrm{lin}}[t] = \frac{\sum_{i=1}^{t} \phi(q_t)^\top \phi(k_i) v_i}{\sum_{i=1}^{t} \phi(q_t)^\top \phi(k_i)}$
-    \Statex \hspace{1em} Store intermediate states in a cache for sliding window computation.
+    \Statex \hspace{1em} Store intermediate states in a cache for recurrent information.
 \State \textbf{Vanilla (Softmax) Attention:}
     \Statex \hspace{1em} Compute standard self-attention output $o_{\mathrm{base}}$ (optionally truncated for long sequences):
     \Statex \hspace{1em} $o_{\mathrm{base}} = \text{Softmax}\left(\frac{q k^\top}{\sqrt{d_h}}\right) v$
@@ -124,7 +126,7 @@ The \texttt{LiZAttention} module is a core component of the TPTT architecture, d
 
 \subsubsection{Efficient Internal Memory Management}
 
-The cache of intermediate states maintained by \texttt{LiZAttention} enables a sliding window mechanism, efficiently supporting long-context inference without excessive computational overhead~\cite{lucidrains2020linearattention, katharopoulos2020transformers}. This approach allows the model to scale to longer sequences, leveraging both local and global context.
+The cache of intermediate states maintained by \texttt{LiZAttention} enables a recurrent information, efficiently supporting long-context inference without excessive computational overhead~\cite{lucidrains2020linearattention, katharopoulos2020transformers}. This approach allows the model to scale to longer sequences, leveraging both local and global context.
     
 
 
