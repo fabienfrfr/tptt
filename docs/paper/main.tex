@@ -97,7 +97,7 @@ The output $\mathbf{O}_{\text{lin}}$ is then computed from these memory states.
 Our approach injects linearized attention and memory augmentation modules into pretrained transformer models. The process involves:
 \begin{enumerate}
     \item \textbf{Identification of Target Modules:} Key attention layers to be modified are identified using tools such as \texttt{get\_tptt\_model}.
-    \item \textbf{Modification of Attention Layers:} These layers are replaced or extended with the proposed \texttt{LiZAttention} module, which implements both linear and softmax attention with MaG.
+    \item \textbf{Modification of Attention Layers:} These layers are replaced or extended with the proposed \texttt{LiZAttention} module, which implements both linear and softmax attention with linear projection weigth sharing and MaG.
     \item \textbf{Training and Fine-Tuning:} The modified model is fine-tuned using parameter-efficient methods such as LoRA~\cite{hu2021lora}, ensuring optimal adaptation to the new mechanisms without full retraining.
 \end{enumerate}
 This procedure enables the transformation of any causal pretrained LLM into a memory-augmented, efficient architecture with minimal overhead, that without any new layers.
@@ -184,7 +184,7 @@ Table~\ref{tab:training-metrics} summarizes the training performance metrics for
 
 \subsection{Evaluation Metrics and Benchmark Results}
 
-For evaluation, we focus on metrics standard in LLM and QA benchmarking: Exact Match (EM), Partial Exact Match (PEM), and Partial Quasi Exact Match (PQEM)~\cite{7,3,4,6}. These metrics respectively measure strict correctness, partial overlap, and quasi-exactness between model outputs and ground truth answers, providing a nuanced view of model performance~\cite{hendrycks2021measuring,7,3,4}.
+For evaluation, we focus on metrics standard in LLM and QA benchmarking: Exact Match (EM), Partial Exact Match (PEM), and Partial Quasi Exact Match (PQEM). These metrics respectively measure strict correctness, partial overlap, and quasi-exactness between model outputs and ground truth answers, providing a nuanced view of model performance~\cite{hendrycks2021measuring}.
 
 Table~\ref{tab:mmlu-results} presents the MMLU benchmark results in the one-shot setting. TPTT models, and especially Titans-Llama-3.2-1B, consistently outperform their base counterparts in EM, with competitive PEM and PQEM scores. This demonstrates the benefit of integrating linearized attention and internal memory mechanisms for complex language understanding tasks.
 
