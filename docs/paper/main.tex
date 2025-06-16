@@ -28,6 +28,14 @@
 Recent advances in large language models (LLMs) have enabled remarkable progress in natural language processing, but their computational and memory demands remain a major challenge, particularly for long-context inference. We present TPTT (Transforming Pretrained Transformer into Titans), a novel framework for upgrading pretrained Transformer models with efficient linearized attention mechanisms and advanced memory management. TPTT leverages techniques such as Memory as Gate (MaG) and mixed linearized attention (LiZA), and is fully compatible with the Hugging Face Transformers library, enabling seamless adaptation of any causal LLM via parameter-efficient fine-tuning (LoRA) without full retraining. We demonstrate the effectiveness of TPTT on the MMLU benchmark with models of approximately 1 billion parameters, observing substantial improvements in both efficiency and accuracy. For example, Titans-Llama-3.2-1B achieves a 20\% increase in Exact Match (EM) over its baseline. Detailed statistical analyses and comparisons to recent state-of-the-art methods confirm the practical scalability and robustness of TPTT. Source code is available at \url{https://github.com/fabienfrfr/tptt}.
 \end{abstract}
 
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.8\linewidth]{fig.pdf}
+    \caption{Overview of the TPTT framework architecture. On the left, the diagram illustrates a decoder-only architecture where linear attention is injected in parallel of vanilla attention (LiZAttention). On the right, the detailed architecture of the linearized attention mechanism is depicted, highlighting the shared weights for query (Q), key (K), and value (V) projections. It also shows the management of the state memory (S) and the combination of outputs through the Memory as Gate (MaG) weighting mechanism. The diagram emphasizes the integration of linearized attention mechanisms and advanced memory management techniques, such as Delta Rule and AdAvgPool, contributing to processing and output generation.}
+    \label{fig:approach_overview}
+\end{figure}
+
+
 \section{Introduction}
 
 The success of transformer-based large language models (LLMs)~\cite{vaswani2017attention, brown2020language} has revolutionized natural language processing (NLP), enabling unprecedented progress across a wide range of tasks. However, the quadratic computational complexity and substantial memory requirements of the standard self-attention mechanism remain a significant bottleneck, particularly for long-context inference. 
