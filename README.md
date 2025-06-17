@@ -15,6 +15,14 @@ It leverages the [flash-linear-attention](https://github.com/fla-org/flash-linea
 - **Modular Design**: Easily extend or customize operators and integration strategies.
 - **Compatibility**: Designed to integrate with Hugging Face Transformers and similar PyTorch models.
 
+
+
+
+![overview](./docs/fig.png)
+
+
+
+
 ---
 
 ## Installation
