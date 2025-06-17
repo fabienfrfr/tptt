@@ -213,7 +213,7 @@ See `requirements.txt` for the full list.
 If you use TPTT in your academic work, please cite:
 
 ```bibtex
-@misc{furfaro2025tptt,
+@misc{ff2025tptt,
   author       = {Fabien Furfaro},
   title        = {TPTT: Transforming Pretrained Transformer into Titans},
   year         = {2025},
