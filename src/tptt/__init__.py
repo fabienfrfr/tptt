@@ -1,4 +1,4 @@
-__version__ = "0.1.0"
+__version__ = "0.5.0"
 
 from .configuration_tptt import TpttConfig, generate_model_card
 from .modeling_tptt import (AttentionOperator, LCache, LiZAttention, TpttModel,
