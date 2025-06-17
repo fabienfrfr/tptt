@@ -31,7 +31,7 @@ Recent advances in large language models (LLMs) have enabled remarkable progress
 \begin{figure}[ht]
     \centering
     \includegraphics[width=0.8\linewidth]{fig.pdf}
-    \caption{Overview of the TPTT framework architecture. On the left, the diagram illustrates a decoder-only architecture where linear attention is injected in parallel of vanilla attention (LiZAttention). On the right, the detailed architecture of the linearized attention mechanism is depicted, highlighting the shared weights for query (Q), key (K), and value (V) projections. It also shows the management of the state memory (S) and the combination of outputs through the Memory as Gate (MaG) weighting mechanism. The diagram emphasizes the integration of linearized attention mechanisms and advanced memory management techniques, such as Delta Rule and AdAvgPool, contributing to processing and output generation.}
+    \caption{Overview of the TPTT framework architecture. On the left, the diagram illustrates a decoder-only architecture where linear attention is injected in parallel of vanilla attention (LiZAttention). On the right, the detailed architecture of the linearized attention mechanism is depicted, highlighting the shared weights for query (Q), key (K), and value (V) projections. It also shows the management of the state memory (S) and the combination of outputs through the Memory as Gate (MaG) weighting mechanism. The diagram emphasizes the integration of linearized attention mechanisms and advanced memory management techniques, such as Delta Rule and AdaptativeAvgPool1D, contributing to processing and output generation.}
     \label{fig:approach_overview}
 \end{figure}
 
@@ -54,7 +54,7 @@ In this work, we introduce TPTT (Transforming Pretrained Transformer into Titans
 
 \subsection{Linearized Attention Mechanisms}
 
-Standard self-attention in transformers computes pairwise interactions between all tokens, resulting in quadratic complexity with respect to sequence length~\cite{vaswani2017attention}. To address this, linearized attention mechanisms approximate the softmax attention using linear operations, typically by projecting queries and keys through a feature map $\phi$~\cite{katharopoulos2020transformers, wang2020linformer, dolga2024latte, ahn2024linear, qin2022devil, yang2024parallelizing}. This reduces computational and memory costs, enabling efficient processing of long sequences while maintaining modeling power~\cite{gu2024mamba, dao2023flashattention, zhang2024lolcat, lan2025liger, mlops2024linearattention}. The output of softmax attention for an input sequence $\mathbf{X} = \{\mathbf{x}_1, \dots, \mathbf{x}_T\} \in \mathbb{R}^{T \times D}$ is:
+Standard self-attention in transformers computes pairwise interactions between all tokens, resulting in quadratic complexity with respect to sequence length~\cite{vaswani2017attention}. To address this, linearized attention mechanisms approximate the softmax attention using linear operations, typically by projecting queries and keys through a feature map $\phi$~\cite{katharopoulos2020transformers, wang2020linformer, dolga2024latte, ahn2024linear, qin2022devil, yang2024parallelizing}. This reduces computational and memory costs, enabling efficient processing of long sequences while maintaining modeling power~\cite{gu2024mamba, dao2023flashattention, zhang2024lolcat, lan2025liger}. The output of softmax attention for an input sequence $\mathbf{X} = \{\mathbf{x}_1, \dots, \mathbf{x}_T\} \in \mathbb{R}^{T \times D}$ is:
 \begin{equation}
 \mathbf{Q}, \mathbf{K}, \mathbf{V} = \mathbf{X}\mathbf{W}_Q, \mathbf{X}\mathbf{W}_K, \mathbf{X}\mathbf{W}_V
 \end{equation}
@@ -77,7 +77,7 @@ where $\alpha \in [0,1]$ is adapted during training. This allows the model to le
 
 \subsection{Parallel Delta Rule Modeling}
 
-In this works, the feature mapping function of linear attention is approximated by DeltaNet~\cite{yang2024parallelizing}. The recurrent update of internal memory states can be formulated in two ways, following:
+In this works, the feature mapping function of linear attention is approximated by DeltaNet~\cite{yang2024parallelizing}. The recurrent update of internal memory states is formulated in two ways, following:
 \begin{itemize}
     \item \textbf{Closed Form (intra-chunk):}
     \begin{equation}
@@ -105,7 +105,7 @@ This procedure enables the transformation of any causal pretrained LLM into a me
 
 \subsection{LiZAttention Module}
 
-The \texttt{LiZAttention} module is a core component of the TPTT architecture, designed to synergistically combine linearized attention and standard (softmax) attention mechanisms. This hybrid approach leverages the computational efficiency of linear attention while retaining the expressivity of vanilla attention. To support long-context inference, \texttt{LiZAttention} maintains a cache of intermediate states and implements a recurrent information mechanism for efficient internal memory management~\cite{lucidrains2020linearattention, katharopoulos2020transformers}.
+The \texttt{LiZAttention} module is a core component of the TPTT architecture, designed to synergistically combine linearized attention and standard (softmax) attention mechanisms. This hybrid approach leverages the computational efficiency of linear attention while retaining the expressivity of vanilla attention. To support long-context inference, \texttt{LiZAttention} maintains a cache of intermediate states and implements a recurrent information mechanism for efficient internal memory management~\cite{katharopoulos2020transformers}.
 
 \begin{algorithm}[H]
 \caption{LiZAttention Forward Pass}
@@ -121,7 +121,7 @@ The \texttt{LiZAttention} module is a core component of the TPTT architecture, d
 \State \textbf{Linear Attention:}
     \Statex \hspace{1em} Compute linear attention output $o_{\mathrm{lin}}$ using a feature map $\phi$:
     \Statex \hspace{1em} $o_{\mathrm{lin}}[t] = \frac{\sum_{i=1}^{t} \phi(q_t)^\top \phi(k_i) v_i}{\sum_{i=1}^{t} \phi(q_t)^\top \phi(k_i)}$
-    \Statex \hspace{1em} Store intermediate states in a cache for recurrent information.
+    \Statex \hspace{1em} Store intermediate states in a memory cache for recurrent information.
 \State \textbf{Vanilla (Softmax) Attention:}
     \Statex \hspace{1em} Compute standard self-attention output $o_{\mathrm{base}}$ (optionally truncated for long sequences):
     \Statex \hspace{1em} $o_{\mathrm{base}} = \text{Softmax}\left(\frac{q k^\top}{\sqrt{d_h}}\right) v$
@@ -134,7 +134,7 @@ The \texttt{LiZAttention} module is a core component of the TPTT architecture, d
 
 \subsubsection{Efficient Internal Memory Management}
 
-The cache of intermediate states maintained by \texttt{LiZAttention} enables a recurrent information, efficiently supporting long-context inference without excessive computational overhead~\cite{lucidrains2020linearattention, katharopoulos2020transformers}. This approach allows the model to scale to longer sequences, leveraging both local and global context.
+The cache of intermediate states maintained by \texttt{LiZAttention} enables a recurrent information, efficiently supporting long-context inference without excessive computational overhead~\cite{katharopoulos2020transformers}. This approach allows the model to scale to longer sequences, leveraging both local and global context.
     
 
 
@@ -142,7 +142,7 @@ The cache of intermediate states maintained by \texttt{LiZAttention} enables a r
 
 \subsection{Parameter-Efficient Fine-Tuning with LoRA}
 
-To adapt the TPTT architecture to downstream tasks, we employ Low-Rank Adaptation (LoRA)~\cite{hu2021lora, lora_hf, radekosmulski2023lora, chavan2023glora}, a parameter-efficient fine-tuning technique that injects trainable low-rank matrices into selected projection layers while freezing the original model weights. This approach drastically reduces the number of trainable parameters and memory requirements, while maintaining performance comparable to full fine-tuning~\cite{hu2021lora, radekosmulski2023lora, lora_hf, apxml2025lora}. For TPTT, LoRA is configured with a rank of 8, $\alpha=16$, and a dropout rate of 0.05. Fine-tuning targets the main projection modules, specifically \texttt{[q\_proj, k\_proj, v\_proj, o\_proj]} for Llama/Mistral and \texttt{[qkv\_proj, out\_proj]} for OpenELM~\cite{lora_hf, roy2024loraexplore}.
+To adapt the TPTT architecture to downstream tasks, we employ Low-Rank Adaptation (LoRA)~\cite{hu2021lora, lora_hf}, a parameter-efficient fine-tuning technique that injects trainable low-rank matrices into selected projection layers while freezing the original model weights. This approach drastically reduces the number of trainable parameters and memory requirements, while maintaining performance comparable to full fine-tuning~\cite{hu2021lora, radekosmulski2023lora, lora_hf}. For TPTT, LoRA is configured with a rank of 8, $\alpha=16$, and a dropout rate of 0.05. Fine-tuning targets the main projection modules, specifically \texttt{[q\_proj, k\_proj, v\_proj, o\_proj]} for Llama/Mistral and \texttt{[qkv\_proj, out\_proj]} for OpenELM~\cite{lora_hf}.
 
 \subsection{Training Setup and Hyperparameters}
 
@@ -157,7 +157,7 @@ A critical component of the training process is the LiZA MaG callback, which dyn
 
 \subsection{Experimental Setup}
 
-We evaluated the TPTT framework on several pretrained language models with approximately 1 billion parameters, using the MMLU benchmark~\cite{hendrycks2021measuring} as the primary evaluation suite. Training was conducted on 500 samples from the \texttt{yahma/alpaca-cleaned} dataset for 5 epochs, with a maximum sequence length of 384 tokens, a batch size of 3, and a learning rate of $5 \times 10^{-4}$. Mixed precision training and gradient clipping at 1.0 were employed to optimize computational efficiency and stability. All experiments were performed on NVIDIA Tesla T4 GPUs (Kaggle platform). The trained models and detailed metrics are publicly available on the Hugging Face Model Hub\footnote{\url{https://huggingface.co/ffurfaro/}}, with full training logs accessible via Hugging Face TensorBoard.
+We evaluated the TPTT framework on several pretrained language models with approximately 1 billion parameters, using the MMLU benchmark~\cite{hendrycks2021measuring} as the primary evaluation suite. Training was conducted on 500 samples from the \texttt{yahma/alpaca-cleaned} dataset~\cite{alpaca2023} for 5 epochs, with a maximum sequence length of 384 tokens, a batch size of 3, and a learning rate of $5 \times 10^{-4}$. Mixed precision training and gradient clipping at 1.0 were employed to optimize computational efficiency and stability. All experiments were performed on NVIDIA Tesla T4 GPUs (Kaggle platform). The trained models and detailed metrics are publicly available on the Hugging Face Model Hub\footnote{\url{https://huggingface.co/ffurfaro/}}, with full training logs accessible via Hugging Face TensorBoard.
 
 \subsection{Training Results}
 
@@ -166,20 +166,21 @@ Table~\ref{tab:training-metrics} summarizes the training performance metrics for
 \begin{table}[h!]
     \centering
     \resizebox{\textwidth}{!}{
-    \begin{tabular}{|l|c|c|c|c|c|c|c|}
+    \begin{tabular}{|l|c|c|c|c|c|c|l|}
     \hline
-    Model & Learning Rate & Final Loss & Training Time (s) & Samples/s & Steps/s & Total FLOPs & Gradient Norm \\
+    Model & Loss & Training Time (s) & Samples/s & Steps/s & Total FLOPs & Gradient Norm & Refs Based On \\
     \hline
-    Titans-Llama-3.2-1B & 1.19e-6 & 1.375 & 1654.1 & 1.51 & 0.254 & 5.62e18 & 2.68 \\
-    Titans-OpenELM-1\_1B & 1.19e-6 & 1.3188 & 1651.1 & 1.51 & 0.254 & 5.85e18 & 0.704 \\
-    Titans-Qwen2.5-1.5B & 1.19e-6 & 1.2568 & 1900.6 & 1.31 & 0.221 & 7.56e18 & 1.99 \\
-    Titans-OLMo-1B-hf & 1.19e-6 & 1.3068 & 1585.2 & 1.58 & 0.265 & 6.20e18 & 3.12 \\
+    Titans-Llama-3.2-1B & 1.375 & 1654.1 & 1.51 & 0.254 & 5.62e18 & 2.68 & \cite{touvron2023llama} \\
+    Titans-OpenELM-1\_1B & 1.3188 & 1651.1 & 1.51 & 0.254 & 5.85e18 & 0.704 & \cite{openelm2024} \\
+    Titans-Qwen2.5-1.5B & 1.2568 & 1900.6 & 1.31 & 0.221 & 7.56e18 & 1.99 & \cite{qwen2023} \\
+    Titans-OLMo-1B-hf & 1.3068 & 1585.2 & 1.58 & 0.265 & 6.20e18 & 3.12 & \cite{olmo2024} \\
     \hline
     \end{tabular}
     }
     \caption{Training performance metrics for TPTT models.}
     \label{tab:training-metrics}
-    \end{table}
+\end{table}
+
     
 
 \subsection{Evaluation Metrics and Benchmark Results}
@@ -226,7 +227,7 @@ TPTT offers a scalable and practical solution for deploying high-performance LLM
 Our current evaluation is limited to models of moderate size (around 1 billion parameters). Scaling TPTT to larger architectures and more diverse tasks may introduce new challenges, including increased tuning complexity and the need for further optimization of memory mechanisms. While our results are promising, broader validation on additional benchmarks and real-world scenarios is needed to fully assess the generalizability and robustness of the approach.
 
 \paragraph{Future Directions.}
-Future work will focus on optimizing the integration process, exploring more sophisticated internal memory mechanisms~\cite{behrouz2025titans}, and extending the evaluation to larger models and a wider range of benchmarks~\cite{llmevalmetrics2024, llmevalmetrics2025}. Additional research will investigate hybrid approaches and the interplay between linearized attention, memory augmentation, and other efficiency-oriented techniques.
+Future work will focus on optimizing the integration process, exploring more sophisticated internal memory mechanisms~\cite{behrouz2025titans}, and extending the evaluation to larger models and a wider range of benchmarks. Additional research will investigate hybrid approaches and the interplay between linearized attention, memory augmentation, and other efficiency-oriented techniques.
 
 In summary, TPTT provides a practical, scalable, and effective framework for upgrading pretrained Transformers, with strong empirical results and promising implications for the future of efficient language modeling.
 
