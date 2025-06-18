@@ -25,13 +25,13 @@
 \maketitle
 
 \begin{abstract}
-Recent advances in large language models (LLMs) have enabled remarkable progress in natural language processing, but their computational and memory demands remain a major challenge, particularly for long-context inference. We present TPTT (Transforming Pretrained Transformer into Titans), a novel framework for upgrading pretrained Transformer models with efficient linearized attention mechanisms and advanced memory management. TPTT leverages techniques such as Memory as Gate (MaG) and mixed linearized attention (LiZA), and is fully compatible with the Hugging Face Transformers library, enabling seamless adaptation of any causal LLM via parameter-efficient fine-tuning (LoRA) without full retraining. We demonstrate the effectiveness of TPTT on the MMLU benchmark with models of approximately 1 billion parameters, observing substantial improvements in both efficiency and accuracy. For example, Titans-Llama-3.2-1B achieves a 20\% increase in Exact Match (EM) over its baseline. Detailed statistical analyses and comparisons to recent state-of-the-art methods confirm the practical scalability and robustness of TPTT. Source code is available at \url{https://github.com/fabienfrfr/tptt}.
+Recent advances in large language models (LLMs) have enabled remarkable progress in natural language processing, but their computational and memory demands remain a major challenge, particularly for long-context inference. We present TPTT (Transforming Pretrained Transformer into Titans), a novel framework for upgrading pretrained Transformer models with efficient linearized attention mechanisms and advanced memory management. TPTT leverages techniques such as Memory as Gate (MaG) and mixed linearized attention (LiZA), and is fully compatible with the Hugging Face Transformers library, enabling seamless adaptation of any causal LLM via parameter-efficient fine-tuning (LoRA) without full retraining. We show the effectiveness of TPTT on the MMLU benchmark with models of approximately 1 billion parameters, observing substantial improvements in both efficiency and accuracy. For example, Titans-Llama-3.2-1B achieves a 20\% increase in Exact Match (EM) over its baseline. Statistical analyses and comparisons to recent state-of-the-art methods confirm the practical scalability and robustness of TPTT. Source code is available at \url{https://github.com/fabienfrfr/tptt}.
 \end{abstract}
 
 \begin{figure}[ht]
     \centering
     \includegraphics[width=0.8\linewidth]{fig.pdf}
-    \caption{Overview of the TPTT framework architecture. On the left, the diagram illustrates a decoder-only architecture where linear attention is injected in parallel of vanilla attention (LiZAttention). On the right, the detailed architecture of the linearized attention mechanism is depicted, highlighting the shared weights for query (Q), key (K), and value (V) projections. It also shows the management of the state memory (S) and the combination of outputs through the Memory as Gate (MaG) weighting mechanism. The diagram emphasizes the integration of linearized attention mechanisms and advanced memory management techniques, such as Delta Rule and AdaptativeAvgPool1D, contributing to processing and output generation.}
+    \caption{Overview of the TPTT framework architecture. On the left, the diagram illustrates a decoder-only architecture where linear attention is injected in parallel of vanilla attention (LiZAttention). On the right, the detailed architecture of the linearized attention mechanism is depicted, highlighting the shared weights for query (Q), key (K), value (V), and output (O) projections. It also shows the management of the state memory (S) and the combination of outputs through the Memory as Gate (MaG) weighting mechanism. The diagram emphasizes the integration of linearized attention mechanisms and advanced memory management techniques, such as Delta Rule and AdaptativeAvgPool1D, contributing to processing and output generation.}
     \label{fig:approach_overview}
 \end{figure}
 
@@ -44,11 +44,9 @@ To address these challenges, recent research has explored several directions. Ef
 
 \section{Related Work}
 
-
-
 Despite these advances, most existing methods require significant architectural modifications or training from scratch, which limits their applicability to already pretrained models. For example, solutions like FlashAttention~\cite{dao2023flashattention} and Mamba~\cite{gu2023mamba} focus on efficient architectures, while others such as LoLCat~\cite{zhang2024lolcats} and Liger~\cite{lan2025liger} convert standard attention to linearized forms; notably, Liger exploits similar properties to those leveraged in this work, but does not rely on explicit linearization injection.
 
-In this work, we introduce TPTT (Transforming Pretrained Transformer into Titans), a framework that transforms pretrained transformer models into more efficient and scalable architectures by incorporating linearized attention mechanisms and advanced internal memory augmentation. TPTT leverages techniques such as Memory as Gate (MaG) and mixed linearized attention (LiZA), drawing inspiration from the Titans architecture~\cite{behrouz2024titans}. Our approach is fully compatible with existing frameworks and enables rapid adaptation of any causal LLM to long-context tasks via parameter-efficient fine-tuning with LoRA~\cite{hu2022lora}, without requiring full retraining. The goal is to unlock the potential of already trained models by equipping them with memory-augmented capabilities through lightweight adaptation.
+In this work, we introduce TPTT (Transforming Pretrained Transformer into Titans), a framework that transforms pretrained transformer models into efficient and scalable architectures by incorporating linearized attention mechanisms and advanced internal memory augmentation. TPTT leverages techniques such as Memory as Gate (MaG) and mixed linearized attention (LiZA), drawing inspiration from the Titans architecture~\cite{behrouz2024titans}. Our approach is fully compatible with existing frameworks and enables rapid adaptation of any causal LLM to long-context tasks via parameter-efficient fine-tuning with LoRA~\cite{hu2022lora}, without requiring full retraining. The goal is to unlock the potential of already trained models by equipping them with memory-augmented capabilities through lightweight adaptation.
 
 \section{Methodology}
 
@@ -77,7 +75,7 @@ where $\alpha \in [0,1]$ is adapted during training. This allows the model to le
 
 \subsection{Parallel Delta Rule Modeling}
 
-In this works, the feature mapping function of linear attention is approximated by DeltaNet~\cite{yang2024parallelizing}. The recurrent update of internal memory states is formulated in two ways, following:
+In this work, the feature mapping function of linear attention is approximated by DeltaNet~\cite{yang2024parallelizing}. The recurrent update of internal memory states is formulated in two ways, following:
 \begin{itemize}
     \item \textbf{Closed Form (intra-chunk):}
     \begin{equation}
@@ -135,22 +133,16 @@ The \texttt{LiZAttention} module is a core component of the TPTT architecture, d
 \subsubsection{Efficient Internal Memory Management}
 
 The cache of intermediate states maintained by \texttt{LiZAttention} enables a recurrent information, efficiently supporting long-context inference without excessive computational overhead~\cite{katharopoulos2020transformers}. This approach allows the model to scale to longer sequences, leveraging both local and global context.
-    
-
 
 \section{Training Procedure}
 
 \subsection{Parameter-Efficient Fine-Tuning with LoRA}
 
-To adapt the TPTT architecture to downstream tasks, we employ Low-Rank Adaptation (LoRA)~\cite{hu2022lora, lora_hf}, a parameter-efficient fine-tuning technique that injects trainable low-rank matrices into selected projection layers while freezing the original model weights. This approach drastically reduces the number of trainable parameters and memory requirements, while maintaining performance comparable to full fine-tuning~\cite{hu2022lora, lora_hf}. For TPTT, LoRA is configured with a rank of 8, $\alpha=16$, and a dropout rate of 0.05. Fine-tuning targets the main projection modules, specifically \texttt{[q\_proj, k\_proj, v\_proj, o\_proj]} for Llama/Mistral and \texttt{[qkv\_proj, out\_proj]} for OpenELM~\cite{lora_hf}.
-
-\subsection{Training Setup and Hyperparameters}
-
-Training is performed on 500 samples from the \texttt{yahma/alpaca-cleaned} dataset over 5 epochs. Sequences are tokenized to a maximum length of 384, with truncation and padding as needed. The training is conducted on NVIDIA Tesla T4 GPUs (Kaggle platform), utilizing mixed precision to optimize computational efficiency. Key hyperparameters include a batch size of 3, a learning rate of $5 \times 10^{-4}$, and gradient clipping at 1.0 to prevent gradient overflow. Training progress is logged every 5 steps, and model checkpoints are saved at the end of each epoch. The total number of training steps is 420.
+To adapt the TPTT architecture to downstream tasks, we employ Low-Rank Adaptation (LoRA)~\cite{hu2022lora, lora_hf}, a parameter-efficient fine-tuning technique that injects trainable low-rank matrices into selected projection layers while freezing the original model weights. This approach reduces the number of trainable parameters and memory requirements, while maintaining performance comparable to full fine-tuning~\cite{hu2022lora, lora_hf}. LoRA is configured with a rank of 8, $\alpha=16$, and a dropout rate of 0.05. Fine-tuning targets the main projection modules, specifically \texttt{[q\_proj, k\_proj, v\_proj, o\_proj]} for Llama/Mistral and \texttt{[qkv\_proj, out\_proj]} for OpenELM~\cite{lora_hf}.
 
 \subsection{Dynamic Memory as Gate Scheduling (LiZA MaG Callback)}
 
-A critical component of the training process is the LiZA MaG callback, which dynamically adjusts the Memory as Gate (MaG) weighting parameter during training. The MaG weight is initialized at 0.01 and linearly increased to 0.5 over the first 100 steps, facilitating a smooth transition from reliance on vanilla (softmax) attention to linearized attention. This schedule allows the model to effectively balance the two attention mechanisms, optimizing performance throughout training. The callback is integrated directly into the training loop, ensuring adaptive control of the MaG parameter and enhancing the model's adaptability and efficiency.
+A important component of the training process is the LiZA MaG callback, which dynamically adjusts the Memory as Gate (MaG) weighting parameter during training. The MaG weight is initialized at 0.01 and linearly increased to 0.5 over the first 100 steps, facilitating a smooth transition from reliance on vanilla (softmax) attention to linearized attention. This schedule allows the model to effectively balance the two attention mechanisms, optimizing performance throughout training. The callback is integrated directly into the training loop, ensuring adaptive control of the MaG parameter and enhancing the model's adaptability and efficiency.
 
 
 \section{Experiments and Results}
@@ -161,7 +153,7 @@ We evaluated the TPTT framework on several pretrained language models with appro
 
 \subsection{Training Results}
 
-Table~\ref{tab:training-metrics} summarizes the training performance metrics for various TPTT models. The results indicate consistent and efficient learning across architectures, as evidenced by low final loss values and stable gradient norms. The use of Low-Rank Adaptation (LoRA) and the Memory as Gate (MaG) mechanism proved effective in optimizing training dynamics and convergence.
+Table~\ref{tab:training-metrics} summarizes the training performance metrics for various TPTT models. The results indicate consistent and efficient learning across architectures, by low final loss values and stable gradient norms. The use of Low-Rank Adaptation (LoRA) and the Memory as Gate (MaG) mechanism shows effective in optimizing training dynamics and convergence.
 
 \begin{table}[h!]
     \centering
@@ -187,7 +179,7 @@ Table~\ref{tab:training-metrics} summarizes the training performance metrics for
 
 For evaluation, we focus on metrics standard in LLM and QA benchmarking: Exact Match (EM), Partial Exact Match (PEM), and Partial Quasi Exact Match (PQEM). These metrics respectively measure strict correctness, partial overlap, and quasi-exactness between model outputs and ground truth answers, providing a nuanced view of model performance~\cite{hendrycks2020measuring}.
 
-Table~\ref{tab:mmlu-results} presents the MMLU benchmark results in the one-shot setting. TPTT models, and especially Titans-Llama-3.2-1B, consistently outperform their base counterparts in EM, with competitive PEM and PQEM scores. This demonstrates the benefit of integrating linearized attention and internal memory mechanisms for complex language understanding tasks.
+Table~\ref{tab:mmlu-results} presents the MMLU benchmark results in the one-shot setting. TPTT models, and especially Titans-Llama-3.2-1B, consistently outperform their base counterparts in EM, with better PEM and PQEM scores. This shows the benefit of integrating linearized attention and internal memory mechanisms for complex language understanding tasks.
 
 \begin{table}[h!]
     \centering
@@ -213,12 +205,12 @@ Table~\ref{tab:mmlu-results} presents the MMLU benchmark results in the one-shot
 
 \subsection{Discussion and Comparison}
 
-Compared to recent state-of-the-art methods such as Mamba~\cite{gu2023mamba}, LoLCat~\cite{zhang2024lolcats}, and Liger~\cite{lan2025liger}, TPTT stands out by enabling the transformation of existing pretrained models without full retraining, while maintaining strong benchmark performance. The observed improvements in EM and competitive PEM/PQEM scores highlight the effectiveness of TPTT's linearized attention and memory augmentation for efficient and robust LLM adaptation. These results confirm that TPTT is a practical and scalable solution for enhancing pretrained LLMs, especially in resource-constrained settings.
+Compared to recent state-of-the-art methods such as Mamba~\cite{gu2023mamba}, LoLCat~\cite{zhang2024lolcats}, and Liger~\cite{lan2025liger}, TPTT stands out by enabling the transformation of existing pretrained models without full retraining, while maintaining good benchmark performance. The observed improvements in EM and better PEM/PQEM scores highlight the effectiveness of TPTT's linearized attention and memory augmentation for efficient and robust LLM adaptation. These results confirm that TPTT is a practical and scalable solution for enhancing pretrained LLMs, especially in resource-constrained settings.
 
 
 \section{Discussion and Conclusion}
 
-In this paper, we have introduced TPTT, a novel framework for enhancing pretrained Transformer models by integrating efficient linearized attention mechanisms and internal memory augmentation. Our approach leverages parameter-efficient fine-tuning (LoRA)~\cite{hu2022lora} to enable the rapid adaptation of large language models (LLMs) to long-context tasks, without the need for full retraining. Experimental results on the MMLU benchmark~\cite{hendrycks2020measuring} demonstrate significant improvements in both efficiency and accuracy, with robust statistical analyses and favorable comparisons to state-of-the-art methods~\cite{gu2023mamba, zhang2024lolcats, lan2025liger}.
+In this paper, we have introduced TPTT, a novel framework for enhancing pretrained Transformer models by integrating efficient linearized attention mechanisms and internal memory augmentation. Our approach leverages parameter-efficient fine-tuning (LoRA)~\cite{hu2022lora} to enable the rapid adaptation of large language models (LLMs) to long-context tasks, without the need for full retraining. Experimental results on the MMLU benchmark~\cite{hendrycks2020measuring} shows significant improvements in both efficiency and accuracy, with robust statistical analyses and favorable comparisons to state-of-the-art methods~\cite{gu2023mamba, zhang2024lolcats, lan2025liger}.
 
 \paragraph{Practical Implications.}
 TPTT offers a scalable and practical solution for deploying high-performance LLMs in resource-constrained environments. The integration of linearized attention and memory augmentation reduces computational and memory requirements, making advanced language models more accessible for real-world applications. The use of LoRA allows for efficient and flexible fine-tuning, enabling rapid adaptation to new tasks and domains.
