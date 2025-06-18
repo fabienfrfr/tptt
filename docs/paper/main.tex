@@ -94,8 +94,8 @@ The output $\mathbf{O}_{\text{lin}}$ is then computed from these memory states.
 
 Our approach injects linearized attention and memory augmentation modules into pretrained transformer models. The process involves:
 \begin{enumerate}
-    \item \textbf{Identification of Target Modules:} Key attention layers to be modified are identified using tools such as \texttt{get\_tptt\_model}.
-    \item \textbf{Modification of Attention Layers:} These layers are replaced or extended with the proposed \texttt{LiZAttention} module, which implements both linear and softmax attention with linear projection weigth sharing and MaG.
+    \item \textbf{Identification of Target Modules:} Key attention layers to be modified are identified using tools such as \textit{get\_tptt\_model}.
+    \item \textbf{Modification of Attention Layers:} These layers are replaced or extended with the proposed \textit{LiZAttention} module, which implements both linear and softmax attention with linear projection weigth sharing and MaG.
     \item \textbf{Training and Fine-Tuning:} The modified model is fine-tuned using parameter-efficient methods such as LoRA~\cite{hu2022lora}, ensuring optimal adaptation to the new mechanisms without full retraining.
 \end{enumerate}
 This procedure enables the transformation of any causal pretrained LLM into a memory-augmented, efficient architecture with minimal overhead, that without any new layers.
