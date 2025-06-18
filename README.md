@@ -23,13 +23,20 @@ It leverages the [flash-linear-attention](https://github.com/fla-org/flash-linea
 
 ## Installation
 
+
+```bash
+pip install tptt
+```
+
+or
+
 ```bash
 git clone https://github.com/fabienfrfr/tptt.git
 cd tptt
 make install
 ```
 
-> **Note**: `flash-linear-attention` requires a CUDA-enabled GPU.
+> **Note**: `flash-linear-attention` requires a CUDA-enabled GPU. (optional)
 
 ---
 
