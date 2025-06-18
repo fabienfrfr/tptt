@@ -37,8 +37,8 @@ make install
 
 ```bash
 #!pip install -q flash-linear-attention
-!pip install -q bitsandbytes accelerate
-!pip install -q -U git+https://github.com/fabienfrfr/tptt@main # PyPi soon
+#!pip install -q bitsandbytes accelerate
+!pip install tptt
 ```
 
 #### *Titanesque* Import
@@ -201,7 +201,7 @@ trainer.train()
 - PyTorch
 - einops
 - Transformers
-- Peft (optional)
+- Peft
 - flash-linear-attention (optional)
 
 See `requirements.txt` for the full list.
