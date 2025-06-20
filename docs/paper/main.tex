@@ -25,13 +25,14 @@
 \maketitle
 
 \begin{abstract}
-Recent advances in large language models (LLMs) have enabled remarkable progress in natural language processing, but their computational and memory demands remain a major challenge, particularly for long-context inference. We present TPTT (Transforming Pretrained Transformer into Titans), a novel framework for upgrading pretrained Transformer models with efficient linearized attention mechanisms and advanced memory management. TPTT leverages techniques such as Memory as Gate (MaG) and mixed linearized attention (LiZA), and is fully compatible with the Hugging Face Transformers library, enabling seamless adaptation of any causal LLM via parameter-efficient fine-tuning (LoRA) without full retraining. We show the effectiveness of TPTT on the MMLU benchmark with models of approximately 1 billion parameters, observing substantial improvements in both efficiency and accuracy. For example, Titans-Llama-3.2-1B achieves a 20\% increase in Exact Match (EM) over its baseline. Statistical analyses and comparisons to recent state-of-the-art methods confirm the practical scalability and robustness of TPTT. Source code is available at \url{https://github.com/fabienfrfr/tptt}.
+Recent advances in large language models (LLMs) have led to remarkable progress in natural language processing, but their computational and memory demands remain a significant challenge, particularly for long-context inference. We introduce TPTT (Transforming Pretrained Transformer into Titans), a novel framework for enhancing pretrained Transformer models with efficient linearized attention mechanisms and advanced memory management. TPTT employs techniques such as Memory as Gate (MaG) and mixed linearized attention (LiZA). It is fully compatible with the Hugging Face Transformers library, enabling seamless adaptation of any causal LLM through parameter-efficient fine-tuning (LoRA) without full retraining. We show the effectiveness of TPTT on the MMLU benchmark with models of approximately 1 billion parameters, observing substantial improvements in both efficiency and accuracy. For instance, Titans-Llama-3.2-1B achieves a 20\% increase in Exact Match (EM) over its baseline. Statistical analyses and comparisons with recent state-of-the-art methods confirm the practical scalability and robustness of TPTT. The source code is available at \url{https://github.com/fabienfrfr/tptt} and the Python package at \url{https://pypi.org/project/tptt/}.
 \end{abstract}
+
 
 \begin{figure}[ht]
     \centering
     \includegraphics[width=0.8\linewidth]{fig.pdf}
-    \caption{Overview of the TPTT framework architecture. On the left, the diagram illustrates a decoder-only architecture where linear attention is injected in parallel of vanilla attention (LiZAttention). On the right, the detailed architecture of the linearized attention mechanism is depicted, highlighting the shared weights for query (Q), key (K), value (V), and output (O) projections. It also shows the management of the state memory (S) and the combination of outputs through the Memory as Gate (MaG) weighting mechanism. The diagram emphasizes the integration of linearized attention mechanisms and advanced memory management techniques, such as Delta Rule and AdaptativeAvgPool1D, contributing to processing and output generation.}
+    \caption{Overview of the TPTT architecture. On the left, the diagram illustrates a decoder-only architecture where linear attention is injected in parallel of vanilla attention (LiZAttention). On the right, the detailed architecture of the linearized attention mechanism is depicted, highlighting the shared weights for query (Q), key (K), value (V), and output (O) projections. It also shows the management of the state memory (S) and the combination of outputs through the Memory as Gate (MaG) weighting mechanism. The diagram emphasizes the integration of linearized attention mechanisms and advanced memory management techniques, such as Delta Rule and AdaptativeAvgPool1D, contributing to processing and output generation.}
     \label{fig:approach_overview}
 \end{figure}
 
@@ -61,9 +62,14 @@ Standard self-attention in transformers computes pairwise interactions between a
 \end{equation}
 In linear attention, this is approximated as:
 \begin{equation}
-\mathbf{O}_{\text{lin}, (t)} = \frac{\sum_{i=1}^{t} \phi(\mathbf{q}_t)^\top \phi(\mathbf{k}_i) \mathbf{v}_i}{\sum_{i=1}^{t} \phi(\mathbf{q}_t)^\top \phi(\mathbf{k}_i)}
+\mathbf{O}_{\text{lin}, (t)} = 
+\frac{
+\phi(\mathbf{q}_t)^\top \left( \sum_{i=1}^t \phi(\mathbf{k}_i, \beta_i)\, \mathbf{v}_i^\top \right)}{
+\phi(\mathbf{q}_t)^\top \left( \sum_{i=1}^t \phi(\mathbf{k}_i, \beta_i) \right)} 
+= \frac{\phi(\mathbf{q}_t)^\top S_t}{\phi(\mathbf{q}_t)^\top z_t}
 \end{equation}
-where $\phi$ is a feature mapping function, such as ELU or kernel approximations~\cite{wang2020linformer}.
+where $\mathbf{q}_t$, $\mathbf{k}_i$, and $\mathbf{v}_i$ are the query, key, and value vectors at positions $t$ and $i$, respectively, and $\beta_i$ is a gating vector (or scalar) modulating the keys and values. The function $\phi$ denotes a feature mapping, such as ELU or kernel approximations~\cite{wang2020linformer}.
+
 
 \subsection{Memory as Gate (MaG)}
 
@@ -149,7 +155,7 @@ A important component of the training process is the LiZA MaG callback, which dy
 
 \subsection{Experimental Setup}
 
-We evaluated the TPTT framework on several pretrained language models with approximately 1 billion parameters, using the MMLU benchmark~\cite{hendrycks2020measuring} as the primary evaluation suite. Training was conducted on 500 samples from the \texttt{yahma/alpaca-cleaned} dataset~\cite{taori2023alpaca} for 5 epochs, with a maximum sequence length of 384 tokens, a batch size of 3, and a learning rate of $5 \times 10^{-4}$. Mixed precision training and gradient clipping at 1.0 were employed to optimize computational efficiency and stability. All experiments were performed on NVIDIA Tesla T4 GPUs (Kaggle platform). The trained models and detailed metrics are publicly available on the Hugging Face Model Hub\footnote{\url{https://huggingface.co/ffurfaro/}}, with full training logs accessible via Hugging Face TensorBoard.
+We evaluated the TPTT library on several pretrained language models with approximately 1 billion parameters, using the MMLU benchmark~\cite{hendrycks2020measuring} as the primary evaluation suite. Training was conducted on 500 samples from the \texttt{yahma/alpaca-cleaned} dataset~\cite{taori2023alpaca} for 5 epochs, with a maximum sequence length of 384 tokens, a batch size of 3, and a learning rate of $5 \times 10^{-4}$. Mixed precision training and gradient clipping at 1.0 were employed to optimize computational efficiency and stability. All experiments were performed on NVIDIA Tesla T4 GPUs (Kaggle platform). The trained models and detailed metrics are publicly available on the Hugging Face Model Hub\footnote{\url{https://huggingface.co/ffurfaro/}}, with full training logs accessible via Hugging Face TensorBoard.
 
 \subsection{Training Results}
 
@@ -221,7 +227,7 @@ Our current evaluation is limited to models of moderate size (around 1 billion p
 \paragraph{Future Directions.}
 Future work will focus on optimizing the integration process, exploring more sophisticated internal memory mechanisms~\cite{behrouz2024titans}, and extending the evaluation to larger models and a wider range of benchmarks. Additional research will investigate hybrid approaches and the interplay between linearized attention, memory augmentation, and other efficiency-oriented techniques.
 
-In summary, TPTT provides a practical, scalable, and effective framework for upgrading pretrained Transformers, with strong empirical results and promising implications for the future of efficient language modeling.
+In summary, TPTT provides a practical, scalable, and effective library for upgrading pretrained Transformers, with strong empirical results and promising implications for the future of efficient language modeling.
 
 
 \bibliographystyle{plain}
