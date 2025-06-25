@@ -95,7 +95,7 @@ class LiZAttention(nn.Module):
         base_attn: nn.Module,
         layer_idx: int,
         base_config,  # Backbone Config
-        linear_cache: LCache = None,
+        linear_cache: Optional[LCache] = None,
         operator_mode: str = "delta_rule",
         max_self_attn_length: int = 2048,
         mag_weight: float = 0.5,
@@ -343,7 +343,7 @@ def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-a
     base_config: PretrainedConfig,  # ou LlamaConfig, MistralConfig, etc.
     liza_attention: LiZAttention,
     target_modules: list,
-    linear_cache: LCache = None,
+    linear_cache: Optional[LCache] = None,
     operator_mode: str = "delta_rule",
     mag_weight: float = 0.5,
     max_chunk_size: int = 64,
@@ -397,14 +397,15 @@ class TpttModel(PreTrainedModel):
         repo_or_path = getattr(config, "_base_path", None) or config._name_or_path
 
         # 1. Load backbone TODO : support no model.safetensors
-        backbone = AutoModelForCausalLM.from_pretrained(
+        self.backbone = AutoModelForCausalLM.from_pretrained(
             config.base_model_name, **kwargs
         )
+        self._retie_lm_after_load(**kwargs)  # Force lm tie weights
 
         # 2. Inject LiZA attention
         self.linear_cache = LCache()
         self.backbone, self.linear_cache = self.inject_liza_attention(
-            backbone, config, self.linear_cache
+            self.backbone, config, self.linear_cache
         )
         # 3. Apply LoRA if present and configured
         if config.lora_config is not None:
@@ -414,8 +415,6 @@ class TpttModel(PreTrainedModel):
                 self.load_peft_safetensors(
                     repo_or_path, token=kwargs.get("token", None)
                 )
-        # 4. Force tie weights of lm_head to embedding
-        self._retie_weights_after_load(**kwargs)
 
     def load_peft_safetensors(self, src, token=None):
         # src: local dir or repo_id
@@ -507,21 +506,25 @@ class TpttModel(PreTrainedModel):
                 dst = os.path.join(path, fname)
                 shutil.copy2(src, dst)
 
-    def _retie_weights_after_load(self, **kwargs):
+    def _retie_lm_after_load(self, **kwargs):
         """Re-link lm_head after loading external weights."""
-        embed_weight = find_embedding_weight(self.backbone)
-        if embed_weight is not None and hasattr(self.backbone, "lm_head"):
+        embed_lm = find_embedding_lm(self.backbone)
+        if embed_lm is not None and hasattr(self.backbone, "lm_head"):
+            if self.backbone.lm_head is None:  # ensure lm_head exists
+                self.backbone.lm_head = nn.Linear(
+                    embed_lm.weight.shape[1], embed_lm.weight.shape[0], bias=False
+                )
             if kwargs.get("tie_word_embeddings", True):
-                self.backbone.lm_head.weight = embed_weight  # share weights
+                self.backbone.lm_head.weight = embed_lm.weight  # share weights
                 logger.info("Weights of lm_head have been shared with embedding.")
             else:
-                self.backbone.lm_head.weight = nn.Parameter(embed_weight.clone())
+                self.backbone.lm_head.weight = nn.Parameter(embed_lm.weight.clone())
                 logger.info("Weights of lm_head have been cloned from the embedding.")
 
     @classmethod
     def from_pretrained(cls, *args, **kwargs):
         model = super().from_pretrained(*args, **kwargs)
-        model._retie_weights_after_load(**kwargs)
+        model._retie_lm_after_load(**kwargs)
         return model
 
 
@@ -579,8 +582,10 @@ class AttentionOperator(nn.Module):
         # Output buffer
         output = torch.empty_like(q_chunks)
         # State: [batch, num_heads, head_dim, head_dim]
-        if initial_state is not None:
-            state = initial_state
+        expect_state_shape = (batch_size, num_heads, head_dim, head_dim)
+        if initial_state is not None and initial_state.shape == expect_state_shape:
+            # Use provided initial state
+            state = initial_state.to(device=query.device, dtype=query.dtype)
         else:
             state = torch.zeros(
                 batch_size,
@@ -696,15 +701,15 @@ def extract_layer_idx(module_name: str) -> int:
     return -1
 
 
-def find_embedding_weight(module):
+def find_embedding_lm(module):
     """Find the embedding weight in a model module."""
     for _, child in module.named_modules():
         if hasattr(child, "embed_tokens") and hasattr(child.embed_tokens, "weight"):
-            return child.embed_tokens.weight
+            return child.embed_tokens
         if hasattr(child, "token_embeddings") and hasattr(
             child.token_embeddings, "weight"
         ):
-            return child.token_embeddings.weight
+            return child.token_embeddings
     return None
 
 

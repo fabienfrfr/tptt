@@ -28,12 +28,26 @@ build:
 	mv requirements.tmp.tmp requirements.tmp
 	poetry build
 
-publish:
-	poetry export --without-hashes --format=requirements.txt --output=requirements.txt
-	sed 's/;.*//' requirements.txt | grep -v '^[[:space:]]*$$' > requirements.txt.tmp
-	mv requirements.txt.tmp requirements.txt
+COMMIT_MESSAGE ?= "Merge dev into main"
+
+merge-publish:
+	git checkout main
+	git merge --squash dev
+	git commit -m $(COMMIT_MESSAGE)
+
+	semantic-release version
+	poetry self update
+	poetry export --without-hashes --format=requirements.txt --output=requirements.tmp
+	sed 's/;.*//' requirements.tmp | grep -v '^[[:space:]]*$$' > requirements.tmp.tmp
+	mv requirements.tmp.tmp requirements.tmp
 	poetry build
-	poetry publish --username __token__ --password $(PYPI_TOKEN)
+
+	git push origin main
+	poetry config pypi-token.pypi $(PYPI_TOKEN)
+	poetry publish
+	git branch -D dev
+	git checkout -b dev main
+	git push origin dev --force
 
 docs:
 	cd docs && make html && make clean

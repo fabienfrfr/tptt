@@ -1,0 +1,132 @@
+\documentclass{article}
+\usepackage{tikz}
+\usetikzlibrary{calc}
+\usepackage{wrapfig}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{lipsum}
+\usepackage{amsmath}
+
+\begin{document}
+
+\begin{wrapfigure}{r}{0.5\textwidth}
+
+\tikzset{
+    layerlink/.style={-latex, very thick},
+    modulelink/.style={-latex, very thick, densely dashed, shorten >=1pt, shorten <=1pt, rounded corners=3pt},
+    qf/.style={-latex, very thick, rounded corners=5pt},
+}
+
+\begin{tikzpicture}
+    % Define colors for various components
+    \definecolor{fgate_color}{RGB}{252,224,225}
+    \definecolor{abc_color}{RGB}{252,226,187}
+    \definecolor{add_norm_color}{RGB}{242,243,193}
+    \definecolor{glu_color}{RGB}{194,232,247}
+    \definecolor{silu_color}{RGB}{203,231,207}
+    \definecolor{linear_color}{RGB}{220,223,240}
+    \definecolor{gray_bbox_color}{RGB}{243,243,244}
+    \definecolor{oproj_color}{RGB}{203,231,207}
+    \definecolor{operator_color}{RGB}{252,224,225}
+    \definecolor{gray_color}{RGB}{250,250,250}
+
+    % Define styles for various components
+    \tikzset{
+        model/.style={draw=black, very thick, fill=gray_bbox_color, minimum width=4cm, minimum height=5.4cm, rounded corners=10pt},
+        gsa/.style={draw=black, very thick, fill=gray_color, minimum width=7cm, minimum height=7cm, rounded corners=10pt},
+        tokenmixer/.style={draw=black, very thick, fill=gray_color!80, minimum width=2.5cm, minimum height=0.7cm, rounded corners=3pt},
+        glu/.style={draw=black, very thick, fill=glu_color!80, minimum width=2.5cm, minimum height=0.7cm, rounded corners=3pt},
+        norm/.style={draw=black, very thick, fill=add_norm_color!80, minimum width=2.5cm, rounded corners=3pt, align=center},
+        linear/.style={draw=black, very thick, fill=oproj_color!80, minimum width=2.5cm, rounded corners=3pt},
+        stackedsmall/.style={draw=black, very thick, fill=oproj_color!80, minimum width=1.5cm, rounded corners=3pt, rectangle},
+        conv/.style={draw=black, very thick, minimum width=30pt, fill=red!30, rounded corners=3pt, rectangle, font=\small},
+        l2/.style={draw=black, very thick, minimum width=30pt, fill=add_norm_color!80, rounded corners=3pt, rectangle, font=\small},
+        fgate/.style={draw=black, very thick, fill=oproj_color!80, minimum width=1.1cm, rounded corners=3pt},
+        oproj/.style={draw=black, very thick, fill=oproj_color!80, minimum width=2.5cm, rounded corners=3pt},
+        silu/.style={draw=black, very thick, fill=silu_color, minimum width=1.1cm, rounded corners=3pt},
+        normlink/.style={very thick},
+        residual/.style={very thick, rounded corners=5pt},
+        oplus/.style={draw=black, line width=1pt, circle, minimum size=8pt, inner sep=0pt, outer sep=0pt, path picture={
+            \draw (path picture bounding box.center) -- ++(0.3cm,0)
+            (path picture bounding box.center) -- ++(-0.3cm,0)
+            (path picture bounding box.center) -- ++(0,0.3cm)
+            (path picture bounding box.center) -- ++(0,-0.3cm);
+        }},
+        sigmoid/.style={draw=black, line width=1pt, circle, minimum size=8pt, inner sep=0pt, outer sep=0pt, path picture={
+            \node at (path picture bounding box.center) {$\sigma$};
+        }},
+        swish/.style={draw=black, thick, line width=1pt, circle, minimum size=8pt, inner sep=0pt, outer sep=0pt, path picture={
+            \draw[domain=-1.5:0, samples=50, variable=\x, blue, thick]
+            plot ({\x}, {0});
+            \draw[domain=0:1.5, samples=50, variable=\x, blue, thick]
+            plot ({\x}, {\x});
+        }},
+        kgsa/.style={draw=black, very thick, fill=abc_color!50, minimum width=4cm, minimum height=0.8cm, rounded corners=3pt}
+    }
+
+    % Left side model structure
+    \node[model] (model) at (0,0) {};
+    \node[anchor=east,xshift=-2pt] at (model.west) (ntimes) {$N\times$};
+    \node[below=12pt, minimum width=2.5cm] at (model.south) (input) {Inputs};
+    \node[norm, anchor=south, yshift=20pt] at (model.south) (norm1) {RMSNorm};
+    \draw[layerlink] (input.north) -- (norm1.south);
+    \node[tokenmixer, anchor=south, yshift=8pt] at (norm1.north) (gsa0) {LiZAttention};
+    \draw[normlink] (norm1.north) -- (gsa0.south);
+    \node[oplus, anchor=south, yshift=4pt] at (gsa0.north) (oplus1) {};
+    \node[norm, anchor=south, yshift=14pt] at (oplus1.north) (norm2) {RMSNorm};
+    \draw[normlink] (gsa0.north) -- (oplus1.south);
+    \draw[layerlink] (oplus1.north) -- (norm2.south);
+    \draw[residual] ([yshift=-10pt]norm1.south) -- ([xshift=-48pt,yshift=-10pt]norm1.south) -- ([xshift=-48pt]oplus1.center) -- (oplus1.center);
+    \node[glu, anchor=south, yshift=8pt] at (norm2.north) (glu) {Feed-Forward};
+    \draw[normlink] (norm2.north) -- (glu.south);
+    \node[oplus, anchor=south, yshift=4pt] at (glu.north) (oplus2) {};
+    \node[norm, anchor=south, yshift=10pt] at (model.north) (norm3) {RMSNorm};
+    \draw[normlink] (glu.north) -- (oplus2.south);
+    \draw[residual] ([xshift=0pt,yshift=8pt]oplus1.center) -- ([xshift=-48pt,yshift=8pt]oplus1.center) -- ([xshift=-48pt]oplus2.center) -- (oplus2.center);
+    \node[linear, anchor=south, yshift=5pt] at (norm3.north) (linear) {Linear};
+    \draw[layerlink] (oplus2.north) -- (norm3.south);
+    \draw[normlink] (norm3.north) -- (linear.south);
+    \node[above=12pt] at (linear.north) (output) {Outputs};
+    \draw[layerlink] (linear.north) -- (output.south);
+
+    % Right side - Delta Rule implementation
+% Right side - Delta Rule implementation
+\node[gsa, anchor=west, xshift=50pt] (gsa) at (model.east) {};
+\node[kgsa, yshift=15pt, minimum width=170pt] at (gsa.mid) (kernel) {Delta Rule};
+\node[below=12pt] at (gsa.south) (input) {\textcolor{white}{Inputs}};
+
+\node[stackedsmall, anchor=south, yshift=20pt] at (gsa.south) (vproj) {K};
+\node[sigmoid, anchor=south, yshift=4pt] at (vproj.north) (vsilu) {};
+\draw[layerlink] (vsilu.north) -- ++(0,10pt) coordinate (split) {};
+\draw[layerlink] (split) -- ++(-1.5,0) node[midway, above] {$\boldsymbol{v}$} -- ++(0,10pt) -- ([xshift=-10pt]kernel.south west);
+\draw[layerlink] (split) -- ++(1.5,0) node[conv, midway, above] {Conv} -- ++(0,10pt) -- (kernel.south);
+\draw[normlink] (vsilu.south) -- (vproj.north);
+\draw[residual] (input.north) -- (gsa.south) -- (vproj.south);
+
+\node[stackedsmall, anchor=south, yshift=21pt] at ($(gsa.south west)!0.15!(gsa.south east)$) (qproj) {Q};
+\node[sigmoid, anchor=south, yshift=4pt] at (qproj.north) (qsilu) {};
+\draw[layerlink] (qsilu.north) -- (qsilu.north |- kernel.south) node[pos=0.5, left] {$\boldsymbol{q}$};
+\draw[normlink] (qsilu.south) -- (qproj.north);
+\draw[residual] (input.north) -- (gsa.south) |- ([xshift=-10pt, yshift=10pt]gsa.south) -| (qproj.south);
+
+\node[fgate, anchor=south, yshift=20pt] at ($(gsa.south west)!0.8!(gsa.south east)$) (fproj) {V};
+\node[sigmoid, yshift=30pt] at (fproj.north) (sigmoid) {};
+\draw[qf] (sigmoid.north) -- (sigmoid.north |- kernel.south) node[pos=0.8, right] {$\boldsymbol{\beta}$};
+\draw[normlink] (fproj.north) -- (sigmoid);
+\draw[residual] (input.north) -- (gsa.south) |- ([xshift=10pt, yshift=10pt]gsa.south) -| (fproj.south);
+
+\node[norm, anchor=south, yshift=15pt] at (kernel.north) (norm4) {RMSNorm};
+\node[linear, anchor=south, yshift=15pt] at (norm4.north) (oproj) {Linear};
+\draw[layerlink] (kernel.north) -- (norm4.south);
+\node[right] at ($(qsilu)+(0,19pt)$) {$\boldsymbol{k}$};
+\draw[normlink] (norm4.north) -- (oproj.south);
+
+\node[above=12pt] at (gsa.north) (output) {\textcolor{white}{Outputs}};
+\draw[layerlink] (oproj.north) -- (output.south);
+
+\draw[layerlink] ([xshift=-1cm]kernel.west) -- (kernel.west) node[pos=0, left] {$\boldsymbol{s}$};
+
+\end{tikzpicture}
+\end{wrapfigure}
+
+\end{document}

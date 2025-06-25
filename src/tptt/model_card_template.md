@@ -15,6 +15,9 @@ datasets:
 
 Titanesque version of `{base_model_name}` with parallel linearized attention (TPTT 😊) and PEFT.
 
+The architecture was presented in the paper [TPTT](https://huggingface.co/papers/2506.17671).
+
+
 ## Model Details
 
 - **Architecture:** {architectures}

@@ -15,9 +15,20 @@ It leverages the [flash-linear-attention](https://github.com/fla-org/flash-linea
 - **Modular Design**: Easily extend or customize operators and integration strategies.
 - **Compatibility**: Designed to integrate with Hugging Face Transformers and similar PyTorch models.
 
+
+![overview](./docs/fig.png)
+
+
 ---
 
 ## Installation
+
+
+```bash
+pip install tptt
+```
+
+or
 
 ```bash
 git clone https://github.com/fabienfrfr/tptt.git
@@ -25,7 +36,7 @@ cd tptt
 make install
 ```
 
-> **Note**: `flash-linear-attention` requires a CUDA-enabled GPU.
+> **Note**: `flash-linear-attention` requires a CUDA-enabled GPU. (optional)
 
 ---
 
@@ -33,8 +44,8 @@ make install
 
 ```bash
 #!pip install -q flash-linear-attention
-!pip install -q bitsandbytes accelerate
-!pip install -q -U git+https://github.com/fabienfrfr/tptt@main # PyPi soon
+#!pip install -q bitsandbytes accelerate
+!pip install tptt
 ```
 
 #### *Titanesque* Import
@@ -197,7 +208,7 @@ trainer.train()
 - PyTorch
 - einops
 - Transformers
-- Peft (optional)
+- Peft
 - flash-linear-attention (optional)
 
 See `requirements.txt` for the full list.
@@ -209,7 +220,7 @@ See `requirements.txt` for the full list.
 If you use TPTT in your academic work, please cite:
 
 ```bibtex
-@misc{furfaro2025tptt,
+@misc{ff2025tptt,
   author       = {Fabien Furfaro},
   title        = {TPTT: Transforming Pretrained Transformer into Titans},
   year         = {2025},
