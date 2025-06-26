@@ -40,7 +40,9 @@ class TpttConfig(PretrainedConfig):
         name_or_path: Optional[str] = None,
         target_modules_names: Optional[List[str]] = None,
         operator_mode: str = "delta_rule",
-        max_self_attn_length: int = 8192,
+        max_self_attn_length: Optional[
+            int
+        ] = None,  # unnecessary if SWA, else, standards 8192
         mag_weight: float = 0.5,  # if 1.0, use only linear operator
         max_chunk_size: int = 64,
         lora_config: Optional[dict] = None,  # only serialized accepted

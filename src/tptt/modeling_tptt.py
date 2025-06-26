@@ -21,21 +21,6 @@ from transformers.configuration_utils import PretrainedConfig
 
 from .configuration_tptt import TpttConfig
 
-
-def import_fla_ops():
-    """flash linear attention"""
-    if torch.cuda.is_available():
-        try:
-            from fla.ops.gla import fused_chunk_gla, fused_recurrent_gla
-
-            return fused_chunk_gla, fused_recurrent_gla
-        except ImportError:
-            return None, None
-    return None, None
-
-
-fused_chunk_gla, fused_recurrent_gla = import_fla_ops()  # TODO: add all ops
-
 logger = logging.getLogger(__name__)  # monitoring
 
 
@@ -97,7 +82,7 @@ class LiZAttention(nn.Module):
         base_config,  # Backbone Config
         linear_cache: Optional[LCache] = None,
         operator_mode: str = "delta_rule",
-        max_self_attn_length: int = 2048,
+        max_self_attn_length: Optional[int] = None,  # unnecessary
         mag_weight: float = 0.5,
         max_chunk_size: int = 64,
     ):
@@ -233,21 +218,25 @@ class LiZAttention(nn.Module):
         return o_lin
 
     def _process_self_attn(self, hidden_states, attention_mask, kwargs):
-        # If cache_implementation="static" -> truncated attention
-        hidden_states, attention_mask = truncate_attention_mask(
-            hidden_states, attention_mask, self.max_self_attn_length
-        )
+        """Process the self-attention part (with truncation)."""
+        if self.max_self_attn_length:  # Not needed for SWA (nonparam memorize context)
+            hidden_states, attention_mask = truncate_attention_mask(
+                hidden_states, attention_mask, self.max_self_attn_length
+            )
 
-        if kwargs.get("position_embeddings", None) is not None:
-            cos, sin = kwargs["position_embeddings"]
-            cos = cos[:, -self.max_self_attn_length :]
-            sin = sin[:, -self.max_self_attn_length :]
-            kwargs["position_embeddings"] = (cos, sin)
+            if kwargs.get("position_embeddings", None) is not None:
+                cos, sin = kwargs["position_embeddings"]
+                cos = cos[:, -self.max_self_attn_length :]
+                sin = sin[:, -self.max_self_attn_length :]
+                kwargs["position_embeddings"] = (cos, sin)
 
-        if isinstance(kwargs.get("past_key_value", None), DynamicCache):
-            # cache management
-            if len(kwargs["past_key_value"]) > self.layer_idx and self.layer_idx == 0:
-                kwargs["past_key_value"].crop(self.max_self_attn_length - 1)
+            if isinstance(kwargs.get("past_key_value", None), DynamicCache):
+                # cache management
+                if (
+                    len(kwargs["past_key_value"]) > self.layer_idx
+                    and self.layer_idx == 0
+                ):
+                    kwargs["past_key_value"].crop(self.max_self_attn_length - 1)
 
         # Standard attention (mask and rotation is applied inside)
         base_attn_outputs = self.base_attn(
@@ -347,7 +336,7 @@ def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-a
     operator_mode: str = "delta_rule",
     mag_weight: float = 0.5,
     max_chunk_size: int = 64,
-    max_self_attn_length: int = 2048,
+    max_self_attn_length: Optional[int] = None,  # unnecessary
 ):
     """Replace target modules in a model with LiZAttention."""
     linear_cache = linear_cache or LCache()
@@ -542,15 +531,13 @@ class AttentionOperator(nn.Module):
         """Forward pass for the attention operator."""
         beta = options.get("beta", None)
         chunk_size = options.get("chunk_size", 64)
-        scale = options.get("scale", 1)
+        # scale = options.get("scale", 1)
         recurrent_state = options.get("recurrent_state", None)
 
         if self.mode == "delta_rule":
             return self.chunk_delta_rule_forward(
                 q, k, v, beta, chunk_size, initial_state=recurrent_state
             )
-        if self.mode == "gla":
-            return self.gla_forward(q, k, v, beta, scale, initial_state=recurrent_state)
         raise ValueError(f"Unknown operator mode: {self.mode}")
 
     @staticmethod
@@ -658,32 +645,6 @@ class AttentionOperator(nn.Module):
         # Reshape back to [batch, num_heads, seq_len, head_dim]
         output = output.reshape(batch_size, num_heads, seq_len, head_dim)
         return output, state
-
-    @staticmethod
-    def gla_forward(q, k, v, beta, scale, initial_state=None):
-        """Forward pass for GLA attention operator."""
-        if fused_chunk_gla is None or fused_recurrent_gla is None:
-            raise RuntimeError("GLA kernels are not available: CUDA required.")
-        if q.shape[-2] > 1:
-            # Training or sequence length > 1
-            return fused_chunk_gla(
-                q,
-                k,
-                v,
-                beta,
-                scale=scale,
-                initial_state=initial_state,
-                output_final_state=True,
-            )
-        return fused_recurrent_gla(
-            q,
-            k,
-            v,
-            beta,
-            scale=scale,
-            initial_state=initial_state,
-            output_final_state=True,
-        )
 
 
 def get_attention_operator(mode):

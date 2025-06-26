@@ -30,6 +30,14 @@ build:
 
 COMMIT_MESSAGE ?= "Merge dev into main"
 
+merge-dev:
+	git checkout main
+	git merge --squash dev
+	git commit -m $(COMMIT_MESSAGE)
+	git push origin main
+	git checkout -b dev main
+	git push origin dev --force
+
 merge-publish:
 	git checkout main
 	git merge --squash dev
