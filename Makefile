@@ -35,6 +35,7 @@ merge-dev:
 	git merge --squash dev
 	git commit -m $(COMMIT_MESSAGE)
 	git push origin main
+	git branch -D dev
 	git checkout -b dev main
 	git push origin dev --force
 
@@ -86,3 +87,7 @@ sys-deps:
 		lcov \
 		lzma \
 		xz-utils
+
+delete-ci-runs:
+	@echo "Deleting all GitHub Actions runs from GitHub CLI..."
+	gh run list --limit 1000 --json databaseId -q '.[].databaseId' | xargs -n 1 gh run delete

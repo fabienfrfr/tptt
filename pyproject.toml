@@ -1,6 +1,6 @@
 [project]
 name = "tptt"
-version = "0.5.1"
+version = "0.6.0"
 description = "TPTT : Transforming Pretrained Transformers into Titans"
 authors = [
     {name = "fabienfrfr",email = "fabien.furfaro@gmail.com"}
@@ -9,6 +9,11 @@ license = {text = "Apache 2.0"}
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "torch",
+    "transformers",
+    "datasets",
+    "ninja",
+    "einops",
     "peft",
 ]
 

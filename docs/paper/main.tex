@@ -68,33 +68,40 @@ In linear attention, this is approximated as:
 \phi(\mathbf{q}_t)^\top \left( \sum_{i=1}^t \phi(\mathbf{k}_i, \beta_i) \right)} 
 = \frac{\phi(\mathbf{q}_t)^\top S_t}{\phi(\mathbf{q}_t)^\top z_t}
 \end{equation}
-where $\mathbf{q}_t$, $\mathbf{k}_i$, and $\mathbf{v}_i$ are the query, key, and value vectors at positions $t$ and $i$, respectively, and $\beta_i$ is a gating vector (or scalar) modulating the keys and values. The function $\phi$ denotes a feature mapping, such as ELU or kernel approximations~\cite{wang2020linformer}.
 
+where $\mathbf{q}_t$, $\mathbf{k}_i$, and $\mathbf{v}_i$ are the query, key, and value vectors at positions $t$ and $i$, respectively, and $\beta_i$ is a gating vector (or scalar) modulating the keys and values. The function $\phi$ denotes a feature mapping, such as ELU or kernel approximations~\cite{wang2020linformer}. In this work, $\beta_i$ is constructed from average pooling of the keys and values.
 
 \subsection{Memory as Gate (MaG)}
 
-To further enhance long-range dependency modeling, we introduce an internal memory augmentation mechanism, Memory as Gate (MaG), inspired by the Titans architecture~\cite{behrouz2024titans}. Unlike hardware memory, this mechanism enables the model to store and recall contextual information over extended sequences, analogous to cognitive memory. MaG combines the outputs of standard and linearized attention using a weighting parameter:
+To further enhance long-range dependency modeling, we introduce an internal memory augmentation mechanism, Memory as Gate (MaG), inspired by the Titans architecture~\cite{behrouz2024titans}. This mechanism enables the model to store and recall contextual information over extended sequences, analogous to cognitive memory (persistence, surprise, etc.). MaG combines the outputs of standard and linearized attention using a weighting parameter:
 \begin{equation}
 \mathbf{O} = \alpha \cdot \mathbf{O}_{\text{lin}} + (1-\alpha) \cdot \mathbf{O}_{\text{base}}
 \end{equation}
-where $\alpha \in [0,1]$ is adapted during training. This allows the model to leverage both the efficiency of linear attention and the expressivity of softmax attention, and can be seen as a form of memory-augmented gating~\cite{behrouz2024titans, mercat2024linearizing}.
+where $\alpha \in [0,1]$ is adapted during training. This allows the model to leverage both the efficiency of linear attention and the expressivity of softmax attention, and can be seen as a form of memory-augmented gating~\cite{behrouz2024titans, mercat2024linearizing, munkhdalai2024leave}.
 
 \subsection{Parallel Delta Rule Modeling}
 
-In this work, the feature mapping function of linear attention is approximated by DeltaNet~\cite{yang2024parallelizing}. The recurrent update of internal memory states is formulated in two ways, following:
-\begin{itemize}
-    \item \textbf{Closed Form (intra-chunk):}
-    \begin{equation}
-    \mathbf{S}_t = \mathbf{S}_{t-1} + \sum_{i=1}^{C} \mathbf{v}_i \mathbf{k}_i^\top
-    \end{equation}
-    where $C$ is the chunk size and $\mathbf{S}_t$ is the updated state.
-    \item \textbf{Recurrent Form (inter-chunk):}
-    \begin{equation}
-    \mathbf{S}_{t+1} = \mathbf{S}_t + \mathbf{v}_{t+1} \mathbf{k}_{t+1}^\top
-    \end{equation}
-    The final state of one chunk becomes the initial state of the next, supporting efficient memory usage for long sequences.
-\end{itemize}
-The output $\mathbf{O}_{\text{lin}}$ is then computed from these memory states.
+In this work, the feature mapping function of linear attention is replaced by the DeltaNet~\cite{yang2024parallelizing} update. The memory state update is given by:
+\begin{equation}
+\begin{cases}
+    \mathbf{S}_{[t,\,t+C-1]} = \mathbf{S}_{t-1} + \mathbf{K}^\top
+    \left[ \mathbf{T}
+    \left( \mathbf{V} \odot \boldsymbol{\beta} - (\mathbf{K} \odot \boldsymbol{\beta}) \mathbf{S}_{t-1} \right) \right]
+    & \text{(parallel, intra-chunk)} \\[2ex]
+    \mathbf{S}_{t} = \mathbf{S}_{t-1} + \boldsymbol{\beta}_{t} \left(\mathbf{v}_{t} - \mathbf{S}_{t-1} \mathbf{k}_{t}\right) \mathbf{k}_{t}^\top
+    & \text{(sequential, inter-chunk)}
+\end{cases}
+\end{equation}
+
+where
+
+\[
+\mathbf{T} = \mathbf{I} - \mathrm{tril}\left((\mathbf{K} \odot \boldsymbol{\beta}) \mathbf{K}^\top, -1\right)
+\]
+
+and $\odot$ denotes element-wise multiplication. The first case (intra-chunk) is formulated to enable efficient batched matrix operations via a memory-efficient compact WY representation for products of Householder matrices, making it well-suited for parallel execution on modern hardware (e.g., GPUs). The final state $\mathbf{S}_{t+C-1}$ initializes the next chunk. The output $\mathbf{O}_{\text{lin}}$ is computed from these memory states.
+
+
 
 \subsection{Integration with Pretrained Models}
 

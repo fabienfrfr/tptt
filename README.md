@@ -1,6 +1,6 @@
 <h1 align="center"> <p>😊 TPTT</p></h1>
 <h3 align="center">
-    <p>Transforming Pretrained Transformers into Titans (TPTT) </p>
+    <p>Transforming Pretrained Transformers into Titans </p>
 </h3>
 
 **TPTT** is a modular Python library designed to inject efficient linearized attention (*LiZA*) mechanisms-such as *Memory as Gate* (described in [Titans](https://arxiv.org/html/2501.00663v1))-into pretrained transformers 🤗.

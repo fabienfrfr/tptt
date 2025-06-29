@@ -85,7 +85,10 @@ def random_qkv_tensors(batch_size, num_heads, seq_len, head_dim):
     q = torch.randn(batch_size, num_heads, seq_len, head_dim)
     k = torch.randn(batch_size, num_heads, seq_len, head_dim)
     v = torch.randn(batch_size, num_heads, seq_len, head_dim)
-    beta = torch.randn(batch_size, num_heads, seq_len, head_dim)
+    beta = (
+        torch.randn(batch_size, num_heads, seq_len, head_dim),
+        torch.randn(batch_size, num_heads, seq_len, head_dim),
+    )
     return q, k, v, beta
 
 

@@ -24,7 +24,7 @@ def test_forward_shape(
 def test_attention_operator_raises_on_unknown_mode():
     with pytest.raises(ValueError):
         op = AttentionOperator(mode="not_a_mode")
-        op(None, None, None)
+        op(None, None, None, None)
 
 
 def test_chunk_delta_rule_forward_computation(
@@ -32,5 +32,6 @@ def test_chunk_delta_rule_forward_computation(
 ):
     q, k, v, beta = random_qkv_tensors
     chunk_size = 8
+    beta = beta[0]  # Only key or value gate is used in delta rule forward
     out, _ = AttentionOperator.chunk_delta_rule_forward(q, k, v, beta, chunk_size)
     assert out.shape == (batch_size, num_heads, seq_len, head_dim)

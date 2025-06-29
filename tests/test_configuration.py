@@ -1,10 +1,7 @@
 from transformers import PretrainedConfig
 
-from src.tptt.configuration_tptt import (
-    convert_sets_to_lists,
-    TpttConfig,
-    extract_template_variables,
-)
+from src.tptt.configuration_tptt import (TpttConfig, convert_sets_to_lists,
+                                         extract_template_variables)
 
 
 # Tests for convert_sets_to_lists

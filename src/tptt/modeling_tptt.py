@@ -160,29 +160,39 @@ class LiZAttention(nn.Module):
         return q, k, v, out_proj
 
     def _prepare_attn_input(self, q, k, v, gate_norm):
-        # Gating for linear attn
-        g = self.pool_g(k)
+        # Forget and Write Gating for linear attn (abusive term)
+        f_g, w_g = self.pool_g(k), self.pool_g(v)
 
         # Reshape for multi-head
         q = rearrange(q, "b n (h d) -> b h n d", h=self.num_heads)
         k = rearrange(k, "b n (h d) -> b h n d", h=self.num_key_value_heads)
         v = rearrange(v, "b n (h d) -> b h n d", h=self.num_key_value_heads)
-        g = rearrange(g, "b n (h m) -> b h n m", h=self.num_key_value_heads)
+
+        f_g = rearrange(f_g, "b n (h m) -> b h n m", h=self.num_key_value_heads)
+        w_g = rearrange(w_g, "b n (h m) -> b h n m", h=self.num_key_value_heads)
 
         # Repeat for GQA
         k = repeat_kv(k, self.num_key_value_groups)
         v = repeat_kv(v, self.num_key_value_groups)
-        g = repeat_kv(g, self.num_key_value_groups)
 
-        ## linear part
+        f_g = repeat_kv(f_g, self.num_key_value_groups)
+        w_g = repeat_kv(w_g, self.num_key_value_groups)
+
+        ## linear stability part
         q = torch.clamp(F.softmax(q, dim=-1), min=1e-6, max=1 - 1e-6)
         k = torch.clamp(F.softmax(k, dim=-1), min=1e-6, max=1 - 1e-6)
+        v = torch.clamp(v, min=-1e4, max=1e4)
 
-        g = F.logsigmoid(g) / gate_norm
-        g = torch.clamp(g, min=-gate_norm, max=gate_norm)
+        f_g = F.logsigmoid(f_g) / gate_norm
+        w_g = torch.exp(F.logsigmoid(w_g) / gate_norm)
+        f_g = torch.clamp(f_g, min=-gate_norm, max=-1e-6)
+        w_g = torch.clamp(w_g, min=1e-6, max=1 - 1e-6)
 
         # Convert to float32 for numerical stability and get model dtype
-        q, k, v, g = (x.to(torch.float32).contiguous() for x in (q, k, v, g))
+        q, k, v, f_g, w_g = (
+            x.to(torch.float32).contiguous() for x in (q, k, v, f_g, w_g)
+        )
+        g = (f_g, w_g)
 
         return q, k, v, g
 
@@ -527,14 +537,20 @@ class AttentionOperator(nn.Module):
         super().__init__()
         self.mode = mode
 
-    def forward(self, q, k, v, **options):
+    def forward(self, q, k, v, beta, **options):
         """Forward pass for the attention operator."""
-        beta = options.get("beta", None)
         chunk_size = options.get("chunk_size", 64)
         # scale = options.get("scale", 1)
         recurrent_state = options.get("recurrent_state", None)
 
         if self.mode == "delta_rule":
+            # key gate for memory delta rule (standard usage)
+            beta = torch.clamp(torch.exp(beta[0]), min=1e-6, max=1 - 1e-6)
+            return self.chunk_delta_rule_forward(
+                q, k, v, beta, chunk_size, initial_state=recurrent_state
+            )
+        elif self.mode == "delta_rule_v":
+            beta = beta[1]  # value gate for contextual delta rule (already in [0,1])
             return self.chunk_delta_rule_forward(
                 q, k, v, beta, chunk_size, initial_state=recurrent_state
             )
@@ -589,12 +605,6 @@ class AttentionOperator(nn.Module):
             state: [batch, num_heads, head_dim, head_dim]
             Returns: (output_chunk, new_state)
             """
-            # Clamp to avoid numerical instabilities (not in paper)
-            k = torch.clamp(k, min=-1e4, max=1e4)
-            v = torch.clamp(v, min=-1e4, max=1e4)
-            b = torch.clamp(b, min=1e-6, max=1e4)
-            q = torch.clamp(q, min=-1e4, max=1e4)
-
             # Eq. (10): β_t * k_t and β_t * v_t
             k_beta = k * b
             v_beta = v * b
