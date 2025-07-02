@@ -6,6 +6,7 @@ tags:
   - tptt
   - peft
   - trust_remote_code
+pipeline_tag: text-generation
 base_model: {base_model_name}
 datasets:
 - {dataset}

@@ -33,5 +33,16 @@ def test_chunk_delta_rule_forward_computation(
     q, k, v, beta = random_qkv_tensors
     chunk_size = 8
     beta = beta[0]  # Only key or value gate is used in delta rule forward
-    out, _ = AttentionOperator.chunk_delta_rule_forward(q, k, v, beta, chunk_size)
+    out, _ = AttentionOperator.chunk_delta_product_forward(q, k, v, beta, chunk_size)
+    assert out.shape == (batch_size, num_heads, seq_len, head_dim)
+
+
+def test_chunk_delta_product_forward_computation(
+    random_qkv_tensors, batch_size, num_heads, seq_len, head_dim
+):
+    q, k, v, beta = random_qkv_tensors
+    n = 2
+    chunk_size = 8
+    beta = beta[0]  # Only key or value gate is used in delta rule forward
+    out, _ = AttentionOperator.chunk_delta_product_forward(q, k, v, beta, chunk_size, n)
     assert out.shape == (batch_size, num_heads, seq_len, head_dim)

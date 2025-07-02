@@ -4,8 +4,11 @@ import pytest
 import torch
 
 from src.tptt.modeling_tptt import (apply_linear_attention_mask,
-                                    get_valid_chunk_size, match_dim, repeat_kv,
-                                    soft_clamp, truncate_attention_mask)
+                                    chunk_sequence, expand_virtual_tokens,
+                                    get_valid_chunk_size,
+                                    invert_nchunked_lower_triangular_matrix,
+                                    match_dim, repeat_kv, soft_clamp,
+                                    truncate_attention_mask)
 
 
 def test_repeat_kv():
@@ -26,6 +29,76 @@ def test_repeat_kv():
 def test_soft_clamp_parametrize(x, min_val, max_val):
     result = soft_clamp(x, min_val=min_val, max_val=max_val)
     assert torch.all(result <= max_val) and torch.all(result >= min_val)
+
+
+@pytest.mark.parametrize(
+    "B, H, C, size",
+    [
+        (2, 3, 4, 5),
+        (1, 1, 1, 2),
+        (3, 2, 1, 8),
+    ],
+)
+def test_invert_nchunked_lower_triangular_matrix(B, H, C, size):
+    T = torch.tril(torch.randn(B, H, C, size, size), diagonal=-1)
+    eye = torch.eye(size, device=T.device, dtype=T.dtype)
+    I = eye.view((1, 1, 1, size, size))
+
+    inv = invert_nchunked_lower_triangular_matrix(T)
+    M = I - T
+
+    result = torch.matmul(inv, M)
+    assert torch.allclose(
+        result, I.expand_as(result), atol=1e-5
+    ), f"Correct inverse for shape {T.shape}"
+
+
+@pytest.mark.parametrize(
+    "B, H, C, chunk_size, D, n",
+    [
+        (1, 1, 1, 2, 3, 1),  # n=1, no expansion
+        (2, 2, 2, 3, 4, 1),  # n=1, batch
+        (1, 1, 1, 2, 3, 2),  # n=2, simple expansion
+        (2, 1, 1, 2, 2, 3),  # n=3, batch
+    ],
+)
+def test_expand_virtual_tokens_shape_and_content(B, H, C, chunk_size, D, n):
+    x = torch.arange(B * H * C * chunk_size * D).reshape(B, H, C, chunk_size, D)
+    out = expand_virtual_tokens(x, n)
+    # Check shape
+    assert out.shape == (B, H, C, chunk_size * n, D)
+    # Check content for n=1 (should be unchanged)
+    if n == 1:
+        assert torch.equal(out, x)
+    else:
+        # For each original token, all n virtual tokens must be equal to the original
+        for i in range(chunk_size):
+            for j in range(n):
+                idx = i * n + j
+                assert torch.equal(out[..., idx, :], x[..., i, :])
+
+
+def test_expand_virtual_tokens_grad():
+    # Test that gradients flow correctly
+    x = torch.randn(1, 1, 1, 2, 2, requires_grad=True)
+    n = 3
+    out = expand_virtual_tokens(x, n)
+    loss = out.sum()
+    loss.backward()
+    assert x.grad is not None
+    assert x.grad.shape == x.shape
+
+
+def test_chunk_sequence_simple():
+    # Example: 1 batch, 1 head, 6 tokens, 2 head_dim, chunked into 3 chunks of 2
+    x = torch.arange(1 * 1 * 6 * 2).reshape(1, 1, 6, 2)
+    out = chunk_sequence(x, num_chunks=3, chunk_size=2)
+    # Check output shape
+    assert out.shape == (1, 1, 3, 2, 2)
+    # Check that each chunk matches the original slices
+    assert torch.equal(out[0, 0, 0], x[0, 0, 0:2])
+    assert torch.equal(out[0, 0, 1], x[0, 0, 2:4])
+    assert torch.equal(out[0, 0, 2], x[0, 0, 4:6])
 
 
 @pytest.mark.parametrize(

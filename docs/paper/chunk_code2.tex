@@ -1,0 +1,61 @@
+
+% 代码样式设置
+\lstset{
+    language=Python,
+    basicstyle=\ttfamily\small,
+    numbers=left,
+    numberstyle=\ttfamily\textcolor[rgb]{0.5,0.5,0.5}{\scriptsize},
+    numbersep=8pt,
+    frame=lines,
+    framesep=2mm,
+    breaklines=true,
+    keywordstyle=\color{blue},
+    commentstyle=\color[rgb]{0,0.6,0}{\itshape},
+    stringstyle=\color{red},
+    showstringspaces=false,
+    columns=flexible,
+    mathescape=true
+}
+
+% 代码部分
+\begin{figure}[h]
+\centering
+\begin{lstlisting}
+def chunk_delta_rule_forward(Q, K, V, beta, C):
+    '''
+    Q/K/V: query, key, value of shape [L, d]
+    beta: beta of shape [L]
+    C: chunk size 
+    '''
+    # L: sequence length, d: head dimension 
+    L, d = Q.shape
+    # chunking
+    Q, K, V = map(lambda x: x.reshape(-1,C,d), [Q, K, V])
+    beta = beta.reshape(-1, C)
+    K_beta = K * beta.unsqueeze(-1)
+    V_beta = V * beta.unsqueeze(-1)
+    
+    # compute eq. 10 with vectorized forword substitution for fast inverse
+    T = -(K_beta @ K.t()).tril(-1)
+    for i in range(1, C):
+        T[i, :i] = T[i, :i] + (T[i, :, None] * T[:, :i]).sum(-2)
+    T += torch.eye(C)
+    # compute Eq. 11
+    W = T @ K_beta
+    U = T @ V_beta
+    # chunkwise parallel. Eq. 8-9
+    S = torch.zeros(d, d)
+    O = torch.empty_like(V)
+    for i in range(L//C):
+        q_i, k_i, w_i = Q[i], K[i], W[i]
+        u_i = U[i] - w_i @ S
+        o_inter = q_i @ S
+        A_i = (q_i @ k_i.t()).tril()
+        o_intra = A_i @ u_i
+        S += k_i.t() @ u_i
+        O[i] = o_intra + o_inter
+    return O.reshape(L, d)
+\end{lstlisting}
+\caption{Pytorch-like code snippet of the forward pass of our chunkwise algorithm for training DeltaNet. We omit the dimensions of batch size and number of heads for clarity.}
+\label{list_code}
+\end{figure}

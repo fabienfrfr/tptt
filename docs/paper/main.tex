@@ -11,6 +11,7 @@
 \usepackage{geometry}
 \usepackage{cite}
 \usepackage{authblk}
+\usepackage{amsmath, mathtools, empheq}
 
 % Page layout
 \geometry{margin=2cm}
@@ -79,28 +80,25 @@ To further enhance long-range dependency modeling, we introduce an internal memo
 \end{equation}
 where $\alpha \in [0,1]$ is adapted during training. This allows the model to leverage both the efficiency of linear attention and the expressivity of softmax attention, and can be seen as a form of memory-augmented gating~\cite{behrouz2024titans, mercat2024linearizing, munkhdalai2024leave}.
 
-\subsection{Parallel Delta Rule Modeling}
+\subsection{Parallel Delta Product Modeling}
 
-In this work, the feature mapping function of linear attention is replaced by the DeltaNet~\cite{yang2024parallelizing} update. The memory state update is given by:
+The Delta rule~\cite{rumelhart1986learning}, originally introduced for adaptive memory, updates the memory state at each step by removing obsolete associations and writing new ones:
 \begin{equation}
-\begin{cases}
-    \mathbf{S}_{[t,\,t+C-1]} = \mathbf{S}_{t-1} + \mathbf{K}^\top
-    \left[ \mathbf{T}
-    \left( \mathbf{V} \odot \boldsymbol{\beta} - (\mathbf{K} \odot \boldsymbol{\beta}) \mathbf{S}_{t-1} \right) \right]
-    & \text{(parallel, intra-chunk)} \\[2ex]
-    \mathbf{S}_{t} = \mathbf{S}_{t-1} + \boldsymbol{\beta}_{t} \left(\mathbf{v}_{t} - \mathbf{S}_{t-1} \mathbf{k}_{t}\right) \mathbf{k}_{t}^\top
-    & \text{(sequential, inter-chunk)}
-\end{cases}
+    \mathbf{S}_t = \mathbf{S}_{t-1} + \beta_t \left( \mathbf{v}_t - \mathbf{S}_{t-1} \mathbf{k}_t \right) \mathbf{k}_t^\top
+    \qquad \text{(sequential, delta rule)}
 \end{equation}
-
+where $\beta_t$ is a gating parameter, and $\mathbf{k}_t, \mathbf{v}_t$ are the key and value at step $t$. This update improves memory capacity and recall compared to purely additive rules. To enable efficient parallelization, DeltaNet~\cite{yang2024parallelizing} leverages a compact product of Householder matrices to vectorize the update within each chunk. Specifically for order 1, for a chunk of size $C$:
+\begin{equation}
+    \mathbf{S}_{[t,\,t+C-1]} = \mathbf{S}_{t-1} + \mathbf{K}^\top
+    \left[ \mathbf{T^{-1}}
+    \left( \mathbf{V} \odot \boldsymbol{\beta} - (\mathbf{K} \odot \boldsymbol{\beta}) \mathbf{S}_{t-1} \right) \right]
+    \qquad \text{(parallel, intra-chunk)}
+\end{equation}
 where
-
 \[
 \mathbf{T} = \mathbf{I} - \mathrm{tril}\left((\mathbf{K} \odot \boldsymbol{\beta}) \mathbf{K}^\top, -1\right)
 \]
-
-and $\odot$ denotes element-wise multiplication. The first case (intra-chunk) is formulated to enable efficient batched matrix operations via a memory-efficient compact WY representation for products of Householder matrices, making it well-suited for parallel execution on modern hardware (e.g., GPUs). The final state $\mathbf{S}_{t+C-1}$ initializes the next chunk. The output $\mathbf{O}_{\text{lin}}$ is computed from these memory states.
-
+and $\odot$ denotes element-wise multiplication. The final state $\mathbf{S}_{t+C-1}$ initializes the next chunk. This chunkwise formulation enables efficient batched matrix operations, making DeltaNet highly suitable for parallel execution on modern hardware (e.g., GPUs).
 
 
 \subsection{Integration with Pretrained Models}

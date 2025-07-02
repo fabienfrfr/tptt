@@ -89,9 +89,9 @@
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
      showgrid="false"
-     inkscape:zoom="3.6203867"
-     inkscape:cx="350.23883"
-     inkscape:cy="211.16529"
+     inkscape:zoom="1.6998868"
+     inkscape:cx="304.72617"
+     inkscape:cy="112.06629"
      inkscape:window-width="1854"
      inkscape:window-height="1011"
      inkscape:window-x="0"
@@ -215,12 +215,11 @@
        transform="scale(1,-1)"
        style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:9.9626px;font-family:CMR10;-inkscape-font-specification:CMR10;writing-mode:lr-tb;fill:#000000;fill-opacity:1;fill-rule:nonzero;stroke:none"
        id="text238"
-       x="76.045151"
+       x="62.545151"
        y="-646.03809"><tspan
-         x="76.045151 83.378616 92.511337 98.046547 105.51851 110.49981 114.40216"
-         y="-646.03809"
+         x="84.546547 92.018509 96.999809 100.90216"
          sodipodi:role="line"
-         id="tspan236">RMSNorm</tspan></text>
+         id="tspan236">Norm</tspan></text>
     <path
        d="m 97.771097,609.81921 v 3.75"
        style="fill:none;stroke:#000000;stroke-width:1.19553;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:10;stroke-dasharray:none;stroke-opacity:1"
@@ -308,12 +307,12 @@
        transform="scale(1,-1)"
        style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:9.9626px;font-family:CMR10;-inkscape-font-specification:CMR10;writing-mode:lr-tb;fill:#000000;fill-opacity:1;fill-rule:nonzero;stroke:none"
        id="text338"
-       x="234.74733"
+       x="225.74733"
        y="-583.91309"><tspan
-         x="234.74733 242.35777 246.78514 249.55275 253.4272 261.72607 269.05954 274.59476 277.36237"
-         y="-583.91309"
          sodipodi:role="line"
-         id="tspan336">DeltaRule (Linear Attention)</tspan></text>
+         id="tspan336"
+         x="225.74733"
+         y="-583.91309">Linear Attention (DeltaProduct)</tspan></text>
     <path
        d="m 536.52111,568.34253 -134.99083,-0.24069 c -1.65071,-0.003 -2.98883,-1.33812 -2.98883,-2.98883 v -31.29566 c 0,-1.65071 1.33812,-2.99177 2.98883,-2.98883 l 134.99083,0.24069 c 1.65071,0.003 2.98883,1.33812 2.98883,2.98883 v 31.29566 c 0,1.65071 -1.33812,2.99177 -2.98883,2.98883 z"
        style="fill:#fef0dd;fill-opacity:1;fill-rule:nonzero;stroke:#000000;stroke-width:1.19553;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:10;stroke-dasharray:none;stroke-opacity:1"
@@ -670,12 +669,11 @@
        transform="scale(1,-1)"
        style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:9.9626px;font-family:CMR10;-inkscape-font-specification:CMR10;writing-mode:lr-tb;fill:#000000;fill-opacity:1;fill-rule:nonzero;stroke:none"
        id="text154"
-       x="76.045151"
+       x="62.545151"
        y="-571.03809"><tspan
-         x="76.045151 83.378616 92.511337 98.046547 105.51851 110.49981 114.40216"
-         y="-571.03809"
+         x="84.546547 92.018509 96.999809 100.90216"
          sodipodi:role="line"
-         id="tspan152">RMSNorm</tspan></text>
+         id="tspan152">Norm</tspan></text>
     <path
        d="M 131.5211,609.81921 H 67.771096 c -1.65071,0 -3.75,-2.09931 -3.75,-3.75 v -15 c 0,-1.6507 2.09929,-3.75 3.75,-3.75 H 131.5211 c 1.65071,0 3.75,2.0993 3.75,3.75 v 15 c 0,1.65069 -2.09929,3.75 -3.75,3.75 z"
        style="fill:#d5ecd9;fill-opacity:1;fill-rule:nonzero;stroke:#000000;stroke-width:1.19553;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:10;stroke-dasharray:none;stroke-opacity:1"
@@ -697,12 +695,11 @@
        transform="scale(1,-1)"
        style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:9.9626px;font-family:CMR10;-inkscape-font-specification:CMR10;writing-mode:lr-tb;fill:#000000;fill-opacity:1;fill-rule:nonzero;stroke:none"
        id="text78"
-       x="76.180984"
+       x="62.680984"
        y="-500.21024"><tspan
-         x="76.180984 83.51445 92.647171 98.182381 105.65434 110.63564 114.53799"
-         y="-500.21024"
+         x="84.682381 92.154343 97.135643 101.03799"
          sodipodi:role="line"
-         id="tspan76">RMSNorm</tspan></text>
+         id="tspan76">Norm</tspan></text>
     <path
        d="m 304.0211,508.56921 h -15 c -1.65071,0 -3.75,-2.09929 -3.75,-3.75 v -7.5 c 0,-1.65072 2.09929,-3.75 3.75,-3.75 h 15 c 1.65071,0 3.75,2.09928 3.75,3.75 v 7.5 c 0,1.65071 -2.09929,3.75 -3.75,3.75 z"
        style="fill:#d5ecd9;fill-opacity:1;fill-rule:nonzero;stroke:#000000;stroke-width:1.19553;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:10;stroke-dasharray:none;stroke-opacity:1"

@@ -17,7 +17,6 @@ Begins by installing necessary packages and dependencies. This includes packages
 
 ```python
 
-!pip install -q -U git+https://github.com/fabienfrfr/tptt@dev
 !pip install -q -U lighteval
 
 ```

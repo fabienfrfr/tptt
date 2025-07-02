@@ -4,6 +4,17 @@
 
 This doc is designed to train a language model based on the TPTT architecture using the Hugging Face library. It employs the LoRA (Low-Rank Adaptation) technique for efficient fine-tuning of large language models. TPTT enhances pretrained Transformer models with efficient linearized attention mechanisms (LiZA) and advanced memory management, notably the Memory as Gate (MaG) mechanism, to improve efficiency and scalability for long-context inference.
 
+
+## Table of Contents
+
+1. [Initial Setup](#initial-setup)
+2. [Model Configuration](#model-configuration)
+3. [Model Titanization](#model-titanization)
+4. [Data Loading and Preparation](#data-loading-and-preparation)
+5. [Model Training](#model-training)
+6. [Inference](#inference)
+
+
 ## Initial Setup
 
 ### Installing Dependencies
@@ -13,9 +24,28 @@ Begins by installing essential dependencies for quantization and TPTT model supp
 ```python
 
 !pip install -q bitsandbytes accelerate
-!pip install -q git+https://github.com/fabienfrfr/tptt@dev
+# !pip install -q git+https://github.com/fabienfrfr/tptt@dev
+!pip install -q tptt
 
 ```
+
+### Authentication
+
+To access models and datasets from the Hugging Face Hub, you need to authenticate using your Hugging Face token. This is done using the huggingface_hub library.
+
+```python
+
+
+from huggingface_hub import login, HfApi
+from kaggle_secrets import UserSecretsClient
+
+user_secrets = UserSecretsClient()
+hf_token = user_secrets.get_secret("HF_TOKEN")
+login(token=hf_token)
+api = HfApi()
+
+```
+
 
 ### Importing Libraries
 
@@ -58,9 +88,33 @@ lora_dropout=0.05,
 bias="none",
 task_type="CAUSAL_LM",
 target_modules=target_modules,
-)
+).to_dict()
 
 ```
+
+## Model Titanization
+
+
+Transforming a pretrained causal langage transformer model into Titans (Tptt)
+
+```python
+
+base_model_name="meta-llama/Llama-3.2-1B"
+config = tptt.TpttConfig(
+    base_model_name=base_model_name,
+    lora_config=lora_config,
+)
+model = tptt.TpttModel(
+    config, 
+    attn_implementation="eager",
+    # torch_dtype=torch.bfloat16,
+    # quantization_config=bnb_config,
+)
+
+model.backbone.print_trainable_parameters()
+```
+
+After that, it's classical training from Transformer library. But `AdjustMaGWeightCallback` it's recommanded.
 
 ## Data Loading and Preparation
 
@@ -79,6 +133,20 @@ raw_dataset = load_dataset(DATASET)["train"].select(range(N))
 The data is tokenized using a tokenizer compatible with the base model:
 
 ```python
+def preprocess_fn(samples):
+
+(...)
+    tokens = tokenizer(
+        prompts,
+        truncation=True,
+        max_length=384, #256, 512
+        padding="longest",
+        return_attention_mask=True,
+    )
+(...)
+```
+
+```python
 
 tokenizer = AutoTokenizer.from_pretrained(base_tokenizer_name)
 tokenized_dataset = raw_dataset.map(preprocess_fn, batched=True, remove_columns=raw_dataset.column_names)
@@ -86,6 +154,25 @@ tokenized_dataset = raw_dataset.map(preprocess_fn, batched=True, remove_columns=
 ```
 
 ## Model Training
+
+
+```python
+# LiZA MaG callback
+initial_weight=0.01,
+final_weight=0.5,
+transition_step=100,
+liza_callback = tptt.AdjustMaGWeightCallback(
+            model,
+            initial_weight=initial_weight,
+            final_weight=final_weight,
+            transition_step=transition_step,)
+
+
+data_collator = DataCollatorForLanguageModeling(
+    tokenizer=tokenizer,
+    mlm=False,
+)
+```
 
 ### Training Configuration
 
@@ -115,6 +202,7 @@ model=model,
 args=training_args,
 train_dataset=tokenized_dataset,
 data_collator=data_collator,
+callbacks=[liza_callback],
 )
 
 ```

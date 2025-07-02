@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 
 import torch
 import torch.nn.functional as F
+# from torch.linalg import solve_triangular
 from einops import rearrange
 from huggingface_hub import hf_hub_download, list_repo_files
 from peft import LoraConfig, get_peft_model
@@ -546,113 +547,122 @@ class AttentionOperator(nn.Module):
         if self.mode == "delta_rule":
             # key gate for memory delta rule (standard usage)
             beta = torch.clamp(torch.exp(beta[0]), min=1e-6, max=1 - 1e-6)
-            return self.chunk_delta_rule_forward(
+            return self.chunk_delta_product_forward(
                 q, k, v, beta, chunk_size, initial_state=recurrent_state
             )
         elif self.mode == "delta_rule_v":
             beta = beta[1]  # value gate for contextual delta rule (already in [0,1])
-            return self.chunk_delta_rule_forward(
+            return self.chunk_delta_product_forward(
                 q, k, v, beta, chunk_size, initial_state=recurrent_state
+            )
+        elif self.mode == "delta_product":
+            beta = torch.clamp(torch.exp(beta[0]) * beta[1], min=1e-6, max=1 - 1e-6)
+            return self.chunk_delta_product_forward(
+                q, k, v, beta, chunk_size, n=2, initial_state=recurrent_state
             )
         raise ValueError(f"Unknown operator mode: {self.mode}")
 
     @staticmethod
-    def chunk_delta_rule_forward(
-        query, key, value, beta, chunk_size, initial_state=None
+    def chunk_delta_product_forward(
+        query, key, value, beta, chunk_size, n=1, initial_state=None
     ):
         """
-        Implementation of https://arxiv.org/abs/2406.06484
-        query, key, value, beta: [batch, num_heads, seq_len, head_dim]
-        chunk_size: int
-        initial_state: [batch, num_heads, head_dim, head_dim] or None
+        DeltaProduct implementation https://arxiv.org/abs/2502.10297
+        Chunkwise parallele implementation https://arxiv.org/abs/2406.06484
+        DeltaProduct order 2 is Titans equivalence
         """
+
+        def sequential_delta_product_scan(
+            q_chunks, k_chunks, W, U, n, chunk_size, initial_state
+        ):
+            """
+            For each chunk, process chunk_size*n steps (virtual tokens) in order.
+            """
+            B, H, num_chunks, chunk_n, D = q_chunks.shape  # chunk_n = chunk_size * n
+            output = torch.empty_like(q_chunks)
+            state = initial_state
+            for chunk_idx in range(num_chunks):
+                q = q_chunks[:, :, chunk_idx]  # [B, H, chunk_n, D]
+                k = k_chunks[:, :, chunk_idx]  # [B, H, chunk_n, D]
+                w = W[:, :, chunk_idx]  # [B, H, chunk_n, D]
+                u = U[:, :, chunk_idx]  # [B, H, chunk_n, D]
+                o_intra = torch.zeros(B, H, chunk_n, D, device=q.device, dtype=q.dtype)
+                o_inter = torch.zeros(B, H, chunk_n, D, device=q.device, dtype=q.dtype)
+                new_state = state.clone()
+                for step in range(n):
+                    # For each Householder step, select the corresponding virtual tokens
+                    idx = torch.arange(chunk_size) * n + step  # [chunk_size]
+                    q_step = q[:, :, idx, :]  # [B, H, chunk_size, D]
+                    k_step = k[:, :, idx, :]
+                    w_step = w[:, :, idx, :]
+                    u_step = u[:, :, idx, :]
+                    state_i = state[:, :, step]  # [B, H, D, D]
+                    u_i = u_step - torch.matmul(w_step, state_i)
+                    o_inter[:, :, idx, :] = torch.matmul(q_step, state_i)
+                    a_i = (q_step @ k_step.transpose(-2, -1)).tril()
+                    o_intra[:, :, idx, :] = torch.matmul(a_i, u_i)
+                    # Update state for this order
+                    new_state_i = state_i + torch.matmul(k_step.transpose(-2, -1), u_i)
+                    new_state_i = torch.clamp(new_state_i, min=-1e4, max=1e4)
+                    new_state[:, :, step] = new_state_i
+                state = new_state
+                output[:, :, chunk_idx] = o_intra + o_inter
+            return output, state
+
         batch_size, num_heads, seq_len, head_dim = query.shape
         chunk_size = get_valid_chunk_size(seq_len, chunk_size)
         num_chunks = seq_len // chunk_size
 
-        # Reshape for chunking: [batch, num_heads, num_chunks, chunk_size, head_dim]
-        q_chunks = query.reshape(
-            batch_size, num_heads, num_chunks, chunk_size, head_dim
-        )
-        k_chunks = key.reshape(batch_size, num_heads, num_chunks, chunk_size, head_dim)
-        v_chunks = value.reshape(
-            batch_size, num_heads, num_chunks, chunk_size, head_dim
-        )
-        beta_chunks = beta.reshape(
-            batch_size, num_heads, num_chunks, chunk_size, head_dim
-        )
+        # Chunk input tensors to [B, H, num_chunks, chunk_size, D]
+        q_chunks = chunk_sequence(query, num_chunks, chunk_size)
+        k_chunks = chunk_sequence(key, num_chunks, chunk_size)
+        v_chunks = chunk_sequence(value, num_chunks, chunk_size)
+        beta_chunks = chunk_sequence(beta, num_chunks, chunk_size)
 
-        # Output buffer
-        output = torch.empty_like(q_chunks)
-        # State: [batch, num_heads, head_dim, head_dim]
-        expect_state_shape = (batch_size, num_heads, head_dim, head_dim)
-        if initial_state is not None and initial_state.shape == expect_state_shape:
-            # Use provided initial state
+        # Gated keys/values: [B, H, C, chunk_size, D]
+        k_beta = k_chunks * beta_chunks
+        v_beta = v_chunks * beta_chunks
+
+        # Prepare for product scan: [B, H, C, chunk_size*n, D]
+        q_chunks_n = q_chunks if n == 1 else expand_virtual_tokens(q_chunks, n)
+        k_chunks_n = k_chunks if n == 1 else expand_virtual_tokens(k_chunks, n)
+        k_beta_n = k_beta if n == 1 else expand_virtual_tokens(k_beta, n)
+        v_beta_n = v_beta if n == 1 else expand_virtual_tokens(v_beta, n)
+
+        # Build strictly lower-triangular T: [B, H, C, chunk_size*n, chunk_size*n]
+        T = -(k_beta_n @ k_chunks_n.transpose(-2, -1)).tril(-1)
+        T = torch.clamp(T, min=-1e4, max=1e4)
+
+        # Invert (I - T): [B, H, C, chunk_size*n, chunk_size*n]
+        inv_T = invert_nchunked_lower_triangular_matrix(T)
+
+        # Compute W and U: [B, H, C, chunk_size*n, D]
+        W = torch.matmul(inv_T, k_beta_n).clamp(min=-1e4, max=1e4)
+        U = torch.matmul(inv_T, v_beta_n).clamp(min=-1e4, max=1e4)
+
+        # Prepare initial recurrent state: [B, H, n, D, D]
+        state_shape = (batch_size, num_heads, n, head_dim, head_dim)
+        if initial_state is not None and initial_state.shape == state_shape:
             state = initial_state.to(device=query.device, dtype=query.dtype)
         else:
             state = torch.zeros(
                 batch_size,
                 num_heads,
+                n,
                 head_dim,
                 head_dim,
                 device=query.device,
                 dtype=query.dtype,
             )
 
-        def process_chunk(q, k, v, b, state):
-            """
-            q, k, v, b: [batch, num_heads, chunk_size, head_dim]
-            state: [batch, num_heads, head_dim, head_dim]
-            Returns: (output_chunk, new_state)
-            """
-            # Eq. (10): β_t * k_t and β_t * v_t
-            k_beta = k * b
-            v_beta = v * b
+        # Sequential scan over chunks using the DeltaProduct rule
+        output, state = sequential_delta_product_scan(
+            q_chunks_n, k_chunks_n, W, U, n, chunk_size, state
+        )
 
-            # Eq. (11): Lower-triangular matrix T (with -KβK^T off-diagonal, 1 on diagonal)
-            # T = I - tril(KβK^T, -1)
-            t_matrix = -(k_beta @ k.transpose(-2, -1)).tril(-1)
-            t_matrix = torch.clamp(t_matrix, min=-1e4, max=1e4)
-            t_matrix = t_matrix + torch.eye(
-                q.shape[-2], device=q.device, dtype=q.dtype
-            ).unsqueeze(0).unsqueeze(0)
-
-            # Eq. (11): W = T Kβ, U = T Vβ
-            w_matrix = t_matrix @ k_beta
-            w_matrix = torch.clamp(w_matrix, min=-1e4, max=1e4)
-
-            u_matrix = t_matrix @ v_beta
-            u_matrix = torch.clamp(u_matrix, min=-1e4, max=1e4)
-
-            # Eq. (12): u_i = U - W S (S = state)
-            u_i = u_matrix - torch.matmul(w_matrix, state)
-
-            # Eq. (12): inter-chunk output: q S
-            o_inter = torch.matmul(q, state)
-
-            # Eq. (12): intra-chunk attention: tril(q K^T)
-            a_i = (q @ k.transpose(-2, -1)).tril()
-
-            # Eq. (12): intra-chunk output: a_i u_i
-            o_intra = torch.matmul(a_i, u_i)
-
-            # Eq. (12): state update: S_new = S + K^T u_i
-            new_state = state + torch.matmul(k.transpose(-2, -1), u_i)
-            new_state = torch.clamp(new_state, min=-1e4, max=1e4)
-
-            # Eq. (12): output = intra + inter
-            return o_intra + o_inter, new_state
-
-        for chunk_idx in range(num_chunks):
-            q = q_chunks[:, :, chunk_idx]
-            k = k_chunks[:, :, chunk_idx]
-            v = v_chunks[:, :, chunk_idx]
-            b = beta_chunks[:, :, chunk_idx]
-
-            chunk_out, state = process_chunk(q, k, v, b, state)
-            output[:, :, chunk_idx] = chunk_out
-
-        # Reshape back to [batch, num_heads, seq_len, head_dim]
+        # Restore output shape to [batch, num_heads, seq_len, head_dim]
+        idx_last = torch.arange(chunk_size, device=output.device) * n + (n - 1)
+        output = output[:, :, :, idx_last, :]  # [B, H, num_chunks, chunk_size, D]
         output = output.reshape(batch_size, num_heads, seq_len, head_dim)
         return output, state
 
@@ -754,6 +764,46 @@ def truncate_attention_mask(hidden_states, attention_mask, max_length):
                     "No dimension in attention_mask matches sequence length of hidden_states."
                 )
     return hidden_states, attention_mask
+
+
+def chunk_sequence(x, num_chunks, chunk_size):
+    """
+    Splits a sequence tensor into chunks along the sequence dimension. [batch, num_heads, seq_len, head_dim]
+    Returns: torch.Tensor: Output tensor of shape [batch, num_heads, num_chunks, chunk_size, head_dim]
+    """
+    B, H, _, D = x.shape
+    return x.reshape(B, H, num_chunks, chunk_size, D)
+
+
+def expand_virtual_tokens(x, n):
+    """
+    Expands each token in the chunk into 'n' virtual tokens (e.g., for Householder steps).
+    x : [batch, num_heads, num_chunks, chunk_size, head_dim]
+    """
+    B, H, num_chunks, chunk_size, D = x.shape
+    # Add a new dimension for virtual tokens, expand, then reshape (Ensure correct unfolding)
+    return (
+        x.unsqueeze(4)  # [B, H, num_chunks, chunk_size, 1, D]
+        .expand(-1, -1, -1, -1, n, -1)  # [B, H, num_chunks, chunk_size, n, D]
+        .reshape(B, H, num_chunks, chunk_size * n, D)
+    )
+
+
+def invert_nchunked_lower_triangular_matrix(T):
+    """
+    Invert (I - T) where T is strictly lower-triangular, using forward substitution.
+    T: [B, H, C, chunk_size*n, chunk_size*n]
+    """
+    size = T.shape[-1]  # chunk_size * n
+    eye = torch.eye(size, device=T.device, dtype=T.dtype)
+    inv_T = T.clone()
+    for i in range(1, size):
+        update = torch.einsum("...j,...jk->...k", inv_T[..., i, :i], inv_T[..., :i, :i])
+        tmp = inv_T[..., i, :i] + update
+        inv_T = inv_T.clone()
+        inv_T[..., i, :i] = tmp
+    inv_T = inv_T + eye.view((1,) * (inv_T.dim() - 2) + (size, size))
+    return inv_T
 
 
 def get_valid_chunk_size(total_l: int, chunk_size: int) -> int:

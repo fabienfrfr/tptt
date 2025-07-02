@@ -3,24 +3,25 @@
     <p>Transforming Pretrained Transformers into Titans </p>
 </h3>
 
-**TPTT** is a modular Python library designed to inject efficient linearized attention (*LiZA*) mechanisms-such as *Memory as Gate* (described in [Titans](https://arxiv.org/html/2501.00663v1))-into pretrained transformers 🤗.
+**TPTT** is a modular Python library [🔗](https://pypi.org/project/tptt/) designed to inject efficient linearized attention (*LiZA*) mechanisms-such as *Memory as Gate* (described in [Titans](https://arxiv.org/html/2501.00663v1))-into pretrained transformers 🤗.
+
 
 ---
 
 ## Features
 
 - **Flexible Attention Injection**: Seamlessly wrap and augment standard Transformer attention layers with linearized attention variants for latent memory.
-- **Support for Linear Attention**: Includes implementations of DeltaNet (Delta Rule Attention).
+- **Support for Linear Attention**: Includes implementations of [DeltaNet](https://arxiv.org/abs/2406.06484) and [DeltaProduct](https://arxiv.org/abs/2502.10297).
 - **Modular Design**: Easily extend or customize operators and integration strategies.
 - **Compatibility**: Designed to integrate with Hugging Face Transformers and similar PyTorch models.
 
 
 ![overview](./docs/fig.png)
 
+> **Note**: Order 2 `Delta-Product` has the same expressiveness as titans.
 
 
 ## Installation and Usage
-
 
 ```bash
 pip install tptt
