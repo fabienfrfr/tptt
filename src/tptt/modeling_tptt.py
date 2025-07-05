@@ -1,6 +1,7 @@
 """
 This module implements the TPTT model with linear attention (LiZA) and LoRA support.
 Author : Fabien FURFARO
+TPTT : Transforming Pretrained Transformers into Titans (https://arxiv.org/abs/2506.17671)
 """
 
 import logging
@@ -87,6 +88,7 @@ class LiZAttention(nn.Module):
         operator_mode: str = "delta_rule",
         max_self_attn_length: Optional[int] = None,  # unnecessary
         mag_weight: float = 0.5,
+        cross_gate: bool = True,
         max_chunk_size: int = 64,
     ):
         super().__init__()
@@ -95,6 +97,7 @@ class LiZAttention(nn.Module):
         self.layer_idx = layer_idx
         self.max_self_attn_length = max_self_attn_length
         self.mag_weight = mag_weight
+        self.cross_gate = cross_gate
         self.max_chunk_size = max_chunk_size
         (
             self.num_heads,
@@ -281,17 +284,20 @@ class LiZAttention(nn.Module):
                 linear_attention[:, -left_trunc:],
                 softmax_attention[:, -left_trunc:],
             )
-        # Mix linear and base attention outputs (with graph forcing)
+        # NAM : Neural Attention Mixer (with graph forcing)
         mag_weight = torch.tensor(
             self.mag_weight,
             dtype=softmax_attention.dtype,
             device=softmax_attention.device,
         )
-        softmax_attention = (1 - mag_weight) * softmax_attention
-        linear_attention = mag_weight * linear_attention
-        output_attention = (
-            softmax_attention + linear_attention + softmax_attention * linear_attention
-        )  # complex product
+        softmax_weighted = (1 - mag_weight) * softmax_attention
+        linear_weighted = mag_weight * linear_attention
+        if self.cross_gate:
+            output_attention = (
+                softmax_weighted + linear_weighted + softmax_weighted * linear_weighted
+            )  # complex cross product (unlinear interaction)
+        else:
+            output_attention = softmax_weighted + linear_weighted  # classic
         # Final output
         return ensure_stability(output_attention, min_val=-1e4, max_val=1e4)
 
@@ -358,6 +364,7 @@ def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-a
     linear_cache: Optional[LCache] = None,
     operator_mode: str = "delta_rule",
     mag_weight: float = 0.5,
+    cross_gate: bool = True,
     max_chunk_size: int = 64,
     max_self_attn_length: Optional[int] = None,  # unnecessary
 ):
@@ -382,6 +389,7 @@ def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-a
                     operator_mode=operator_mode,
                     max_self_attn_length=max_self_attn_length,
                     mag_weight=mag_weight,
+                    cross_gate=cross_gate,
                     max_chunk_size=max_chunk_size,
                 ),
             )
@@ -473,6 +481,7 @@ class TpttModel(PreTrainedModel):
             operator_mode=config.operator_mode,
             max_self_attn_length=config.max_self_attn_length,
             mag_weight=config.mag_weight,
+            cross_gate=config.cross_gate,
             max_chunk_size=config.max_chunk_size,
         )
 
