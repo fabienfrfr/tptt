@@ -3,7 +3,7 @@
     <p>Transforming Pretrained Transformers into Titans </p>
 </h3>
 
-**TPTT** is a modular Python library [🔗](https://pypi.org/project/tptt/) designed to inject efficient linearized attention (*LiZA*) mechanisms-such as *Memory as Gate* (described in [Titans](https://arxiv.org/html/2501.00663v1))-into pretrained transformers 🤗.
+**TPTT** is a modular Python library [🔗](https://pypi.org/project/tptt/) designed to inject efficient linearized attention (*LiZA*) mechanisms-such as *Memory as Gate* (described in [Titans](https://arxiv.org/abs/2501.00663))-into pretrained transformers 🤗.
 
 
 ---

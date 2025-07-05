@@ -5,7 +5,7 @@ import torch
 
 def test_cache_initial_state(cache):
     """Test that cache initializes with empty state and zero tokens."""
-    assert cache.states == []
+    assert cache.inputs_states == []
     assert cache.seen_tokens == 0
 
 
@@ -43,7 +43,7 @@ def test_cache_reset(cache, batch_size, seq_len, head_dim):
     cache.update(0, key=t)
     cache.seen_tokens = 42
     cache.reset()
-    assert cache.states == []
+    assert cache.inputs_states == []
     assert cache.seen_tokens == 0
 
 

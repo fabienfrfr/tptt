@@ -1,7 +1,7 @@
-__version__ = "0.7.0"
+__version__ = "0.7.1"
 
 from .configuration_tptt import TpttConfig, generate_model_card
-from .modeling_tptt import (AttentionOperator, LCache, LiZAttention, TpttModel,
+from .modeling_tptt import (LCache, LinearAttention, LiZAttention, TpttModel,
                             get_tptt_model)
 from .pipeline_tptt import TpttPipeline
 from .train_tptt import AdjustMaGWeightCallback
@@ -13,7 +13,7 @@ __all__ = [
     "get_tptt_model",
     "AdjustMaGWeightCallback",
     "LCache",
-    "AttentionOperator",
+    "LinearAttention",
     "LiZAttention",
     "generate_model_card",
 ]

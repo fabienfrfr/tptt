@@ -9,6 +9,9 @@
    viewBox="0 0 739.25714 343.42584"
    sodipodi:docname="fig.svg"
    inkscape:version="1.2.2 (b0a8486541, 2022-12-01)"
+   inkscape:export-filename="fig.png"
+   inkscape:export-xdpi="384"
+   inkscape:export-ydpi="384"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns="http://www.w3.org/2000/svg"
@@ -90,8 +93,8 @@
      inkscape:deskcolor="#d1d1d1"
      showgrid="false"
      inkscape:zoom="1.6998868"
-     inkscape:cx="304.72617"
-     inkscape:cy="112.06629"
+     inkscape:cx="296.49033"
+     inkscape:cy="116.18421"
      inkscape:window-width="1854"
      inkscape:window-height="1011"
      inkscape:window-x="0"
@@ -598,12 +601,12 @@
        transform="scale(1,-1)"
        style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:9.9626px;font-family:CMR10;-inkscape-font-specification:CMR10;writing-mode:lr-tb;fill:#000000;fill-opacity:1;fill-rule:nonzero;stroke:none"
        id="text788"
-       x="172.93234"
+       x="166.93234"
        y="-585.15808"><tspan
-         x="172.93234"
+         x="166.93234"
          y="-585.15808"
          id="tspan786"
-         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:CMR10;-inkscape-font-specification:CMR10">s</tspan></text>
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:CMR10;-inkscape-font-specification:CMR10">f(s)</tspan></text>
     <text
        xml:space="preserve"
        transform="matrix(0.75000002,0,0,-0.75000002,0,792.00002)"
@@ -804,15 +807,15 @@
        style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:6px;font-family:CMR10;-inkscape-font-specification:CMR10;text-align:center;writing-mode:lr-tb;text-anchor:middle;fill:#000000;fill-opacity:1;fill-rule:nonzero;stroke:none"
        id="text706-9-0-5-3-4"
        x="173.5211"
-       y="-578.31921"><tspan
+       y="-575.31921"><tspan
          sodipodi:role="line"
          id="tspan704-2-6-6-7-4"
          x="173.5211"
-         y="-578.31921"
+         y="-575.31921"
          style="font-size:6px;text-align:center;text-anchor:middle">Memory</tspan><tspan
          sodipodi:role="line"
          x="173.5211"
-         y="-570.81921"
+         y="-567.81921"
          id="tspan5665"
          style="font-size:6px;text-align:center;text-anchor:middle">cache</tspan></text>
   </g>

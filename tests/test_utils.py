@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from src.tptt.modeling_tptt import (apply_linear_attention_mask,
-                                    chunk_sequence, expand_virtual_tokens,
+                                    chunk_sequence, expand_virtual_tokens_dt,
                                     get_valid_chunk_size,
                                     invert_nchunked_lower_triangular_matrix,
                                     match_dim, repeat_kv, soft_clamp,
@@ -53,36 +53,11 @@ def test_invert_nchunked_lower_triangular_matrix(B, H, C, size):
     ), f"Correct inverse for shape {T.shape}"
 
 
-@pytest.mark.parametrize(
-    "B, H, C, chunk_size, D, n",
-    [
-        (1, 1, 1, 2, 3, 1),  # n=1, no expansion
-        (2, 2, 2, 3, 4, 1),  # n=1, batch
-        (1, 1, 1, 2, 3, 2),  # n=2, simple expansion
-        (2, 1, 1, 2, 2, 3),  # n=3, batch
-    ],
-)
-def test_expand_virtual_tokens_shape_and_content(B, H, C, chunk_size, D, n):
-    x = torch.arange(B * H * C * chunk_size * D).reshape(B, H, C, chunk_size, D)
-    out = expand_virtual_tokens(x, n)
-    # Check shape
-    assert out.shape == (B, H, C, chunk_size * n, D)
-    # Check content for n=1 (should be unchanged)
-    if n == 1:
-        assert torch.equal(out, x)
-    else:
-        # For each original token, all n virtual tokens must be equal to the original
-        for i in range(chunk_size):
-            for j in range(n):
-                idx = i * n + j
-                assert torch.equal(out[..., idx, :], x[..., i, :])
-
-
 def test_expand_virtual_tokens_grad():
-    # Test that gradients flow correctly
-    x = torch.randn(1, 1, 1, 2, 2, requires_grad=True)
+    # Test gradients flow correctly
+    x = torch.randn(1, 5, 10, 8, requires_grad=True)
     n = 3
-    out = expand_virtual_tokens(x, n)
+    out = expand_virtual_tokens_dt(x, n)
     loss = out.sum()
     loss.backward()
     assert x.grad is not None

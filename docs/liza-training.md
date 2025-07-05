@@ -114,7 +114,7 @@ model = tptt.TpttModel(
 model.backbone.print_trainable_parameters()
 ```
 
-After that, it's classical training from Transformer library. But `AdjustMaGWeightCallback` it's recommanded.
+After that, it's classical training from Transformer library. But `AdjustMaGWeightCallback` it's used and optional.
 
 ## Data Loading and Preparation
 
@@ -202,7 +202,7 @@ model=model,
 args=training_args,
 train_dataset=tokenized_dataset,
 data_collator=data_collator,
-callbacks=[liza_callback],
+callbacks=[liza_callback], # optional and need comparizon (bug in Transformer 4.51.3)
 )
 
 ```

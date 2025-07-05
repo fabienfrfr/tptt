@@ -33,7 +33,7 @@ Recent advances in large language models (LLMs) have led to remarkable progress 
 \begin{figure}[ht]
     \centering
     \includegraphics[width=0.8\linewidth]{fig.pdf}
-    \caption{Overview of the TPTT architecture. On the left, the diagram illustrates a decoder-only architecture where linear attention is injected in parallel of vanilla attention (LiZAttention). On the right, the detailed architecture of the linearized attention mechanism is depicted, highlighting the shared weights for query (Q), key (K), value (V), and output (O) projections. It also shows the management of the state memory (S) and the combination of outputs through the Memory as Gate (MaG) weighting mechanism. The diagram emphasizes the integration of linearized attention mechanisms and advanced memory management techniques, such as Delta Rule and AdaptativeAvgPool1D, contributing to processing and output generation.}
+    \caption{Overview of the TPTT architecture. On the left, the diagram illustrates a decoder-only architecture where linear attention is injected in parallel of vanilla attention (LiZAttention). On the right, the detailed architecture of the linearized attention mechanism is depicted, highlighting the shared weights for query (Q), key (K), value (V), and output (O) projections. It also shows the management of the state memory (S) and the combination of outputs through the Memory as Gate (MaG) weighting mechanism. The state can be unlinear between chunk. The diagram emphasizes the integration of linearized attention mechanisms and advanced memory management techniques, such as DeltaProduct and AdaptativeAvgPool1D, contributing to processing and output generation.}
     \label{fig:approach_overview}
 \end{figure}
 
@@ -82,23 +82,72 @@ where $\alpha \in [0,1]$ is adapted during training. This allows the model to le
 
 \subsection{Parallel Delta Product Modeling}
 
-The Delta rule~\cite{rumelhart1986learning}, originally introduced for adaptive memory, updates the memory state at each step by removing obsolete associations and writing new ones:
+In this work, the feature mapping function of linear attention is based on the DeltaProduct operator, which generalizes the Delta rule to achieve higher expressivity while maintaining efficient parallelization. This approach addresses the limitations of linear recurrent architectures, which struggled to balance state-tracking power and hardware efficiency~\cite{siems2025deltaproduct, yang2024parallelizing}.
+
+The Delta rule~\cite{rumelhart1986learning}, as used in associative memory models, updates the memory state sequentially as:
 \begin{equation}
     \mathbf{S}_t = \mathbf{S}_{t-1} + \beta_t \left( \mathbf{v}_t - \mathbf{S}_{t-1} \mathbf{k}_t \right) \mathbf{k}_t^\top
     \qquad \text{(sequential, delta rule)}
 \end{equation}
-where $\beta_t$ is a gating parameter, and $\mathbf{k}_t, \mathbf{v}_t$ are the key and value at step $t$. This update improves memory capacity and recall compared to purely additive rules. To enable efficient parallelization, DeltaNet~\cite{yang2024parallelizing} leverages a compact product of Householder matrices to vectorize the update within each chunk. Specifically for order 1, for a chunk of size $C$:
+where $\mathbf{S}_t$ is the memory state at time $t$, $\mathbf{k}_t$ and $\mathbf{v}_t$ are the key and value, and $\beta_t$ is a gating parameter. This update is inherently sequential and thus not directly parallelizable.
+
+\paragraph{DeltaNet: Parallelization via Householder Product}
+
+DeltaNet~\cite{yang2024parallelizing} enables efficient parallelization by chunking the sequence and vectorizing the update within each chunk using a compact product of Householder matrices. For a chunk of size $C$, the intra-chunk parallel update (order $n=1$) is:
 \begin{equation}
     \mathbf{S}_{[t,\,t+C-1]} = \mathbf{S}_{t-1} + \mathbf{K}^\top
-    \left[ \mathbf{T^{-1}}
+    \left[ \mathbf{T}^{-1}
     \left( \mathbf{V} \odot \boldsymbol{\beta} - (\mathbf{K} \odot \boldsymbol{\beta}) \mathbf{S}_{t-1} \right) \right]
-    \qquad \text{(parallel, intra-chunk)}
+    \qquad \text{(parallel, intra-chunk, order 1)}
 \end{equation}
-where
-\[
-\mathbf{T} = \mathbf{I} - \mathrm{tril}\left((\mathbf{K} \odot \boldsymbol{\beta}) \mathbf{K}^\top, -1\right)
-\]
-and $\odot$ denotes element-wise multiplication. The final state $\mathbf{S}_{t+C-1}$ initializes the next chunk. This chunkwise formulation enables efficient batched matrix operations, making DeltaNet highly suitable for parallel execution on modern hardware (e.g., GPUs).
+where $\mathbf{K} \in \mathbb{R}^{C \times d}$ and $\mathbf{V} \in \mathbb{R}^{C \times d}$ are the stacked keys and values in the chunk, $\boldsymbol{\beta} \in \mathbb{R}^{C \times 1}$ is the gating vector, $\odot$ denotes element-wise multiplication, and
+\begin{equation}
+    \mathbf{T} = \mathbf{I} - \mathrm{tril}\left((\mathbf{K} \odot \boldsymbol{\beta}) \mathbf{K}^\top, -1\right)
+\end{equation}
+with $\mathrm{tril}(\cdot, -1)$ extracting the strictly lower triangular part. This chunkwise formulation enables efficient batched computation on modern hardware by removing sequential dependencies within each chunk~\cite{yang2024parallelizing, siems2025deltaproduct}. To further increase expressivity, a non-linearity $\phi$ (e.g., GELU or tanh) can be applied to the state update:
+\begin{equation}
+    \mathbf{S}_t = \phi(\mathbf{S}_{t-1} + \beta_t \left( \mathbf{v}_t - \mathbf{S}_{t-1} \mathbf{k}_t \right) \mathbf{k}_t^\top)
+\end{equation}
+
+\paragraph{DeltaProduct: Generalization to Higher Order}
+
+DeltaProduct~\cite{siems2025deltaproduct} extends this approach by applying $n$ rank-1 corrections per token, corresponding to a product of $n$ Householder-like transformations. For each position $i$, the state update is defined recursively as:
+\begin{equation}
+    H_{i,j} = H_{i,j-1} - \beta_{i,j} (H_{i,j-1} \mathbf{k}_{i,j} - \mathbf{v}_{i,j}) \mathbf{k}_{i,j}^\top
+    \qquad \text{for } j=1,\ldots,n
+\end{equation}
+where $H_{i,0} = H_{i-1}$ and $H_{i,n} = H_i$. This can be unrolled as:
+\begin{align}
+    H_i &= A(\mathbf{x}_i) H_{i-1} + B(\mathbf{x}_i) \\
+    A(\mathbf{x}_i) &= \prod_{j=1}^n \left( \mathbf{I} - \beta_{i,j} \mathbf{k}_{i,j} \mathbf{k}_{i,j}^\top \right) \\
+    B(\mathbf{x}_i) &= \sum_{j=1}^n \left( \prod_{k=j+1}^n \left( \mathbf{I} - \beta_{i,k} \mathbf{k}_{i,k} \mathbf{k}_{i,k}^\top \right) \right) \beta_{i,j} \mathbf{k}_{i,j} \mathbf{v}_{i,j}^\top
+\end{align}
+where $\mathbf{k}_{i,j}$, $\mathbf{v}_{i,j}$, and $\beta_{i,j}$ are the key, value, and gate for the $j$-th virtual token at position $i$. 
+
+To construct the $n$ virtual tokens per real token, we use a binomial finite difference expansion (derivative trick), as follows:
+\begin{equation}
+    \mathbf{x}^{(m)}_t = \sum_{k=0}^m (-1)^k \binom{m}{k} \mathbf{x}_{t-k}
+    \qquad \text{for } m=0,\ldots,n-1
+\end{equation}
+where $\mathbf{x}^{(m)}_t$ is the $m$-th discrete derivative (virtual token) at position $t$~\cite{behrouz2025s}.
+
+The corresponding chunkwise parallel update is:
+\begin{align}
+    \mathbf{S}_{[t,\,t+C-1]} = \mathbf{S}_{t-1} + \mathbf{K}_h^\top
+    \left[ \mathbf{T}_h^{-1}
+    \left( \mathbf{V}_h \odot \boldsymbol{\beta}_h - (\mathbf{K}_h \odot \boldsymbol{\beta}_h) \mathbf{S}_{t-1} \right) \right]
+    \qquad \text{(parallel, intra-chunk, order $n$)}
+\end{align}
+where, for each Householder step $h$, $\mathbf{K}_h, \mathbf{V}_h \in \mathbb{R}^{(nC) \times d}$ and $\boldsymbol{\beta}_h \in \mathbb{R}^{(nC) \times 1}$ are the keys, values, and gates for the $h$-th virtual token within the chunk, and
+\begin{equation}
+    \mathbf{T}_h = \mathbf{I} - \mathrm{tril}\left((\mathbf{K}_h \odot \boldsymbol{\beta}_h) \mathbf{K}_h^\top, -1\right).
+\end{equation}
+
+This matches our implementation: the input is expanded into $n$ virtual tokens per real token using the derivative trick, and all $\mathbf{T}_h$ are inverted in parallel for efficient batched computation on GPU. The final state $\mathbf{S}_{t+C-1}$ initializes the next chunk.
+
+\paragraph{Expressivity and Theoretical Properties.}
+By increasing the order $n$, DeltaProduct interpolates between the original DeltaNet ($n=1$) and a dense state transition. Notably, DeltaProduct of order $n=2$ achieves a level of expressivity comparable to the Titans model and can solve algorithmic problems beyond the class $\mathrm{TC}^0$ (such as parity)~\cite{siems2025deltaproduct, merrill2024illusion}. This is in contrast to diagonal or single-rank updates, which are fundamentally limited in this regard. DeltaProduct thus provides a tunable trade-off between efficiency and expressivity, while retaining the hardware efficiency of the chunkwise parallel algorithm.
+
 
 
 \subsection{Integration with Pretrained Models}
