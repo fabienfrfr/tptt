@@ -1,6 +1,7 @@
 """
 This module implements the TPTT model with linear attention (LiZA) and LoRA support.
 Author : Fabien FURFARO
+TPTT : Transforming Pretrained Transformers into Titans (https://arxiv.org/abs/2506.17671)
 """
 
 import logging
@@ -86,7 +87,9 @@ class LiZAttention(nn.Module):
         linear_cache: Optional[LCache] = None,
         operator_mode: str = "delta_rule",
         max_self_attn_length: Optional[int] = None,  # unnecessary
+        base_scale_attn: bool = False,
         mag_weight: float = 0.5,
+        cross_gate: bool = False,
         max_chunk_size: int = 64,
     ):
         super().__init__()
@@ -94,7 +97,9 @@ class LiZAttention(nn.Module):
         self.base_config = base_config
         self.layer_idx = layer_idx
         self.max_self_attn_length = max_self_attn_length
+        self.base_scale_attn = base_scale_attn
         self.mag_weight = mag_weight
+        self.cross_gate = cross_gate
         self.max_chunk_size = max_chunk_size
         (
             self.num_heads,
@@ -220,8 +225,6 @@ class LiZAttention(nn.Module):
 
         # Ensure stability
         o_lin = ensure_stability(o_lin, min_val=-1e4, max_val=1e4)
-        # normalization
-        o_lin = rmsnorm(o_lin, eps=1e-5)  # pure fonctional
         return o_lin
 
     def _process_self_attn(self, hidden_states, attention_mask, kwargs):
@@ -268,9 +271,20 @@ class LiZAttention(nn.Module):
             attn_weights, present_key_value, expected_attn_mode = None, None, 1
         # Ensure stability
         o_base = ensure_stability(o_base, min_val=-1e4, max_val=1e4)
-        # normalization
-        o_base = rmsnorm(o_base, eps=1e-5)  # pure fonctional
         return o_base, attn_weights, present_key_value, expected_attn_mode
+
+    def _prepare_attn_mixin(self, o_lin, o_base, tensor_dtype, eps=1e-5):
+        """Prepare linear attn for mixing with self attn."""
+        # Force cast typing, shape : [b n (h d)]
+        o_lin = o_lin.to(tensor_dtype)
+        o_base = o_base.to(tensor_dtype)
+        # o_lin normalization RMSNorm
+        o_lin = o_lin / o_lin.pow(2).mean(dim=-1, keepdim=True).add(eps).sqrt()
+        # feature scaling
+        if self.base_scale_attn:
+            scaler = o_base.pow(2).mean(dim=-1, keepdim=True).add(eps).sqrt()
+            o_lin = scaler * o_lin
+        return o_lin, o_base
 
     def _apply_mag(self, linear_attention, softmax_attention):
         """Apply the MAG strategy"""
@@ -281,17 +295,20 @@ class LiZAttention(nn.Module):
                 linear_attention[:, -left_trunc:],
                 softmax_attention[:, -left_trunc:],
             )
-        # Mix linear and base attention outputs (with graph forcing)
+        # NAM : Neural Attention Mixer (with graph forcing)
         mag_weight = torch.tensor(
             self.mag_weight,
             dtype=softmax_attention.dtype,
             device=softmax_attention.device,
         )
-        softmax_attention = (1 - mag_weight) * softmax_attention
-        linear_attention = mag_weight * linear_attention
-        output_attention = (
-            softmax_attention + linear_attention + softmax_attention * linear_attention
-        )  # complex product
+        softmax_weighted = (1 - mag_weight) * softmax_attention
+        linear_weighted = mag_weight * linear_attention
+        if self.cross_gate:
+            output_attention = (
+                softmax_weighted + linear_weighted + softmax_weighted * linear_weighted
+            )  # complex cross product (unlinear interaction)
+        else:
+            output_attention = softmax_weighted + linear_weighted  # classic
         # Final output
         return ensure_stability(output_attention, min_val=-1e4, max_val=1e4)
 
@@ -334,9 +351,8 @@ class LiZAttention(nn.Module):
             self._process_self_attn(hidden_states, attention_mask, kwargs)
         )
 
-        # Force cast typing, shape : [b n (h d)]
-        o_lin = o_lin.to(tensor_dtype)
-        o_base = o_base.to(tensor_dtype)
+        # Prepare output mixing
+        o_lin, o_base = self._prepare_attn_mixin(o_lin, o_base, tensor_dtype, eps=1e-5)
 
         # Apply Memory as Gate in self-attention (with max length management)
         out = self._apply_mag(o_lin, o_base)
@@ -357,7 +373,9 @@ def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-a
     target_modules: list,
     linear_cache: Optional[LCache] = None,
     operator_mode: str = "delta_rule",
+    base_scale_attn: bool = False,
     mag_weight: float = 0.5,
+    cross_gate: bool = False,
     max_chunk_size: int = 64,
     max_self_attn_length: Optional[int] = None,  # unnecessary
 ):
@@ -381,7 +399,9 @@ def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-a
                     linear_cache=linear_cache,
                     operator_mode=operator_mode,
                     max_self_attn_length=max_self_attn_length,
+                    base_scale_attn=base_scale_attn,
                     mag_weight=mag_weight,
+                    cross_gate=cross_gate,
                     max_chunk_size=max_chunk_size,
                 ),
             )
@@ -472,7 +492,9 @@ class TpttModel(PreTrainedModel):
             linear_cache=linear_cache,
             operator_mode=config.operator_mode,
             max_self_attn_length=config.max_self_attn_length,
+            base_scale_attn=config.base_scale_attn,
             mag_weight=config.mag_weight,
+            cross_gate=config.cross_gate,
             max_chunk_size=config.max_chunk_size,
         )
 
@@ -835,12 +857,6 @@ def find_embedding_lm(module):
     return None
 
 
-def rmsnorm(x, eps=1e-5):
-    """Functional RMSNorm"""
-    rms = x.pow(2).mean(dim=-1, keepdim=True).add(eps).sqrt()
-    return x / rms
-
-
 def ensure_stability(tensor, min_val=-1e4, max_val=1e4):
     """stability forcing"""
     dtype = tensor.dtype
@@ -923,21 +939,22 @@ def truncate_attention_mask(hidden_states, attention_mask, max_length):
     return hidden_states, attention_mask
 
 
-def invert_nchunked_lower_triangular_matrix(T):
+def invert_nchunked_lower_triangular_matrix(T, dtype=torch.float32):
     """
-    Invert (I - T) where T is strictly lower-triangular, using forward substitution.
-    T: [B, H, C, chunk_size*n, chunk_size*n]
+    Explicitly computes the inverse of (I - T), where T is strictly lower-triangular.
+    The algorithm is equivalent to vectorized forward substitution applied to the identity matrix.
+    T: [B, H, C, chunk_size*n, chunk_size*n] Returns: (..., N, N) inverse of (I - T)
     """
     size = T.shape[-1]  # chunk_size * n
-    eye = torch.eye(size, device=T.device, dtype=torch.float32)
-    inv_T = T.clone()
+    eye = torch.eye(size, device=T.device, dtype=dtype)
+    inv_T = T.clone().to(dtype=dtype)
     for i in range(1, size):
         update = torch.einsum("...j,...jk->...k", inv_T[..., i, :i], inv_T[..., :i, :i])
         tmp = inv_T[..., i, :i] + update
         inv_T = inv_T.clone()
         inv_T[..., i, :i] = tmp
     inv_T = inv_T + eye.view((1,) * (inv_T.dim() - 2) + (size, size))
-    return inv_T.to(dtype=torch.float32)
+    return inv_T.to(dtype=dtype)
 
 
 def get_valid_chunk_size(total_l: int, chunk_size: int) -> int:

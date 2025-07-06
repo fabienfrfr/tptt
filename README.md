@@ -1,9 +1,16 @@
 <h1 align="center"> <p>😊 TPTT</p></h1>
+
+<p align="center">
+    <a href="https://arxiv.org/abs/2506.17671"><img alt="GitHub" src="https://img.shields.io/badge/arXiv-tptt-%3CCOLOR%3E.svg"></a>
+    <a href="https://pypi.org/project/tptt/"><img alt="GitHub" src="https://img.shields.io/pypi/v/tptt"></a>
+</p>
+
 <h3 align="center">
     <p>Transforming Pretrained Transformers into Titans </p>
 </h3>
 
-**TPTT** is a modular Python library [🔗](https://pypi.org/project/tptt/) designed to inject efficient linearized attention (*LiZA*) mechanisms-such as *Memory as Gate* (described in [Titans](https://arxiv.org/abs/2501.00663))-into pretrained transformers 🤗.
+
+**TPTT** is a modular Python library designed to inject efficient linearized attention (*LiZA*) mechanisms-such as *Memory as Gate* (described in [Titans](https://arxiv.org/abs/2501.00663))-into pretrained transformers 🤗.
 
 
 ---

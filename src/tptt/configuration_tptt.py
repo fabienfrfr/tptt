@@ -43,7 +43,9 @@ class TpttConfig(PretrainedConfig):
         max_self_attn_length: Optional[
             int
         ] = None,  # unnecessary if SWA, else, standards 8192
+        base_scale_attn: bool = False,
         mag_weight: float = 0.5,  # if 1.0, use only linear operator
+        cross_gate: bool = False,  # unlinear mixing strategy
         max_chunk_size: int = 64,
         lora_config: Optional[dict] = None,  # only serialized accepted
         **kwargs,
@@ -74,7 +76,9 @@ class TpttConfig(PretrainedConfig):
             "attention",
         ]
         self.operator_mode = operator_mode
+        self.base_scale_attn = base_scale_attn
         self.mag_weight = mag_weight
+        self.cross_gate = cross_gate
         self.max_chunk_size = max_chunk_size
         self.max_self_attn_length = max_self_attn_length
 
