@@ -4,18 +4,10 @@ import pytest
 import torch
 
 from src.tptt.modeling_tptt import (apply_linear_attention_mask,
-                                    chunk_sequence, expand_virtual_tokens_dt,
-                                    get_valid_chunk_size,
-                                    invert_nchunked_lower_triangular_matrix,
-                                    match_dim, repeat_kv, soft_clamp,
+                                    chunk_sequence, expand_virtual_tokens,
+                                    fast_invert_matrix, get_valid_chunk_size,
+                                    match_dim, soft_clamp,
                                     truncate_attention_mask)
-
-
-def test_repeat_kv():
-    """Test that repeat_kv repeats the key/value heads along the correct dimension."""
-    x = torch.randn(2, 4, 8, 64)
-    repeated = repeat_kv(x, 2)
-    assert repeated.shape == (2, 8, 8, 64)
 
 
 @pytest.mark.parametrize(
@@ -44,7 +36,7 @@ def test_invert_nchunked_lower_triangular_matrix(B, H, C, size):
     eye = torch.eye(size, device=T.device, dtype=T.dtype)
     I = eye.view((1, 1, 1, size, size))
 
-    inv = invert_nchunked_lower_triangular_matrix(T)
+    inv = fast_invert_matrix(T)
     M = I - T
 
     result = torch.matmul(inv, M)
@@ -53,11 +45,23 @@ def test_invert_nchunked_lower_triangular_matrix(B, H, C, size):
     ), f"Correct inverse for shape {T.shape}"
 
 
+@pytest.mark.parametrize(
+    "trick_mode",
+    [("derivative"), ("rotative"), ("combined")],
+)
+def test_expand_virtual_tokens_shape(trick_mode):
+    B, H, S, D = 1, 5, 10, 8
+    x = torch.randn(B, H, S, D)
+    n = 3
+    out = expand_virtual_tokens(x, n, trick_mode)
+    assert out.shape == torch.Size([B, H, S * n, D])
+
+
 def test_expand_virtual_tokens_grad():
     # Test gradients flow correctly
     x = torch.randn(1, 5, 10, 8, requires_grad=True)
     n = 3
-    out = expand_virtual_tokens_dt(x, n)
+    out = expand_virtual_tokens(x, n)
     loss = out.sum()
     loss.backward()
     assert x.grad is not None

@@ -1,8 +1,15 @@
 <h1 align="center"> <p>😊 TPTT</p></h1>
 
 <p align="center">
-    <a href="https://arxiv.org/abs/2506.17671"><img alt="GitHub" src="https://img.shields.io/badge/arXiv-tptt-%3CCOLOR%3E.svg"></a>
-    <a href="https://pypi.org/project/tptt/"><img alt="GitHub" src="https://img.shields.io/pypi/v/tptt"></a>
+    <a href="https://arxiv.org/abs/2506.17671">
+        <img alt="arXiv" src="https://img.shields.io/badge/arXiv-tptt-blueviolet.svg">
+    </a>
+    <a href="https://pypi.org/project/tptt/">
+        <img alt="PyPI" src="https://img.shields.io/pypi/v/tptt?color=orange">
+    </a>
+    <a href="https://github.com/fabienfrfr/tptt/">
+        <img alt="Release" src="https://img.shields.io/github/v/release/fabienfrfr/tptt?color=brightgreen">
+    </a>
 </p>
 
 <h3 align="center">
@@ -18,7 +25,7 @@
 ## Features
 
 - **Flexible Attention Injection**: Seamlessly wrap and augment standard Transformer attention layers with linearized attention variants for latent memory.
-- **Support for Linear Attention**: Includes implementations of [DeltaNet](https://arxiv.org/abs/2406.06484) and [DeltaProduct](https://arxiv.org/abs/2502.10297).
+- **Support for Linear Attention**: Includes implementations of [DeltaNet](https://arxiv.org/abs/2406.06484) and [DeltaProduct](https://arxiv.org/abs/2502.10297) with optional recurrent nonlinearity between chunks.
 - **Modular Design**: Easily extend or customize operators and integration strategies.
 - **Compatibility**: Designed to integrate with Hugging Face Transformers and similar PyTorch models.
 
