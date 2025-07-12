@@ -277,13 +277,14 @@ class LiZAttention(nn.Module):
 
     def _apply_mag(self, linear_attention, softmax_attention):
         """Apply the MAG strategy"""
-        # Left-Padding management
-        if linear_attention.shape[1] != softmax_attention.shape[1]:
-            left_trunc = min(linear_attention.shape[1], softmax_attention.shape[1])
-            linear_attention, softmax_attention = (
-                linear_attention[:, -left_trunc:],
-                softmax_attention[:, -left_trunc:],
-            )
+        if self.max_self_attn_length:  # Not needed for SWA (nonparam memorize context)
+            # Left-Padding management
+            if linear_attention.shape[1] != softmax_attention.shape[1]:
+                left_trunc = min(linear_attention.shape[1], softmax_attention.shape[1])
+                linear_attention, softmax_attention = (
+                    linear_attention[:, -left_trunc:],
+                    softmax_attention[:, -left_trunc:],
+                )
         # NAM : Neural Attention Mixer (with graph forcing)
         mag_weight = torch.tensor(
             self.mag_weight,
