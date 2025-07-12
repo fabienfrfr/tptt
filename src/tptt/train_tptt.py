@@ -45,7 +45,7 @@ class AdjustMaGWeightCallback(TrainerCallback):
         else:
             transition_step = int(transition_step)
 
-        if current_step < transition_step:
+        if current_step <= transition_step:
             weight = self.initial_weight + (self.final_weight - self.initial_weight) * (
                 current_step / transition_step
             )
@@ -61,3 +61,18 @@ class AdjustMaGWeightCallback(TrainerCallback):
                 break
         if mag_weight is not None and logs is not None:
             logs["mag_weight"] = float(mag_weight)
+
+
+class SaveBestModelCallback(TrainerCallback):
+    """TrainerCallback to save the best model based on evaluation loss."""
+
+    def __init__(self):
+        self.best_metric = float("inf")
+
+    def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+        if metrics is not None and "eval_loss" in metrics:
+            if metrics["eval_loss"] < self.best_metric:
+                self.best_metric = metrics["eval_loss"]
+                control.should_save = True  # Trigger save
+            else:
+                control.should_save = False  # Skip save

@@ -6,6 +6,7 @@ import os
 import re
 from typing import List, Optional, Union
 
+import torch
 from transformers import AutoConfig, PretrainedConfig
 
 
@@ -39,6 +40,7 @@ class TpttConfig(PretrainedConfig):
         base_model_name: str = "meta-llama/Llama-3.2-1B",
         name_or_path: Optional[str] = None,
         target_modules_names: Optional[List[str]] = None,
+        force_attn_implementation: Optional[str] = "eager",
         operator_mode: str = "delta_rule",
         max_self_attn_length: Optional[
             int
@@ -47,6 +49,7 @@ class TpttConfig(PretrainedConfig):
         mag_weight: float = 0.5,  # if 1.0, use only linear operator
         cross_gate: bool = False,  # unlinear mixing strategy
         max_chunk_size: int = 64,
+        linear_precision: Union[str, torch.dtype] = "float32",
         lora_config: Optional[dict] = None,  # only serialized accepted
         **kwargs,
     ):
@@ -75,12 +78,17 @@ class TpttConfig(PretrainedConfig):
             "self_attn",
             "attention",
         ]
+        self.force_attn_implementation = force_attn_implementation
         self.operator_mode = operator_mode
         self.base_scale_attn = base_scale_attn
         self.mag_weight = mag_weight
         self.cross_gate = cross_gate
         self.max_chunk_size = max_chunk_size
         self.max_self_attn_length = max_self_attn_length
+
+        if isinstance(linear_precision, torch.dtype):
+            linear_precision = str(linear_precision).replace("torch.", "")
+        self.linear_precision = linear_precision
 
         self.lora_config = lora_config
         if lora_config is not None:

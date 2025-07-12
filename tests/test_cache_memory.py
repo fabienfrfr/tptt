@@ -5,8 +5,7 @@ import torch
 
 def test_cache_initial_state(cache):
     """Test that cache initializes with empty state and zero tokens."""
-    assert cache.inputs_states == []
-    assert cache.seen_tokens == 0
+    assert cache.inputs_states == {}
 
 
 def test_cache_update_and_getitem(cache, batch_size, seq_len, head_dim):
@@ -41,10 +40,8 @@ def test_cache_reset(cache, batch_size, seq_len, head_dim):
     """Test cache reset clears state and token count."""
     t = torch.randn(batch_size, seq_len, head_dim)
     cache.update(0, key=t)
-    cache.seen_tokens = 42
     cache.reset()
-    assert cache.inputs_states == []
-    assert cache.seen_tokens == 0
+    assert cache.inputs_states == {}
 
 
 def test_cache_update_with_multiple_keys(cache, batch_size, seq_len, head_dim):

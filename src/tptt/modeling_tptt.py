@@ -9,7 +9,8 @@ import math
 import os
 import re
 import shutil
-from typing import Dict, List, Optional
+from functools import partial
+from typing import Dict, Optional, Union
 
 import torch
 import torch.nn.functional as F
@@ -31,35 +32,30 @@ class LCache:
     """Cache for storing intermediate states of linear attention layers."""
 
     def __init__(self):
-        """Initialize the cache."""
-        self.inputs_states: List[Dict[str, torch.Tensor]] = (
-            []
+        """Stores per-layer intermediate states: {layer_idx: state_dict}"""
+        self.inputs_states: Dict[int, Dict[str, torch.Tensor]] = (
+            {}
         )  # recurrent states and qkv buffers
-        self.seen_tokens = 0
 
     def __getitem__(self, layer_idx: int) -> Optional[Dict[str, torch.Tensor]]:
-        """Retrieve the state for the given layer index, if it exists."""
-        if layer_idx < len(self.inputs_states):
-            return self.inputs_states[layer_idx]
-        return None
+        """Retrieve cached state for a given layer, or None if not present"""
+        return self.inputs_states.get(layer_idx, None)
 
     def update(self, layer_idx: int, **kwargs):
-        """Update the cache for a given layer."""
-        detached_kwargs = {}
-        for key, value in kwargs.items():
-            if isinstance(value, torch.Tensor):
-                value = value.detach()
-            detached_kwargs[key] = value
-
-        if len(self.inputs_states) <= layer_idx:
-            self.inputs_states.append(detached_kwargs)
-        else:
+        """Detach all tensors to avoid retaining computation graphs"""
+        detached_kwargs = {
+            k: v.detach() if isinstance(v, torch.Tensor) else v
+            for k, v in kwargs.items()
+        }
+        """Update or create the state for the specified layer"""
+        if layer_idx in self.inputs_states:
             self.inputs_states[layer_idx].update(detached_kwargs)
+        else:
+            self.inputs_states[layer_idx] = detached_kwargs
 
     def reset(self):
-        """Reset the cache and token counter."""
+        """Clear all cached states and reset the token counter"""
         self.inputs_states.clear()
-        self.seen_tokens = 0
 
 
 class LiZAttention(nn.Module):
@@ -77,8 +73,13 @@ class LiZAttention(nn.Module):
         mag_weight: float = 0.5,
         cross_gate: bool = False,
         max_chunk_size: int = 64,
+        linear_precision: Union[str, torch.dtype] = "float32",
     ):
         super().__init__()
+        if isinstance(linear_precision, str):
+            linear_precision = getattr(torch, linear_precision)
+        self.linear_precision = linear_precision
+
         self.base_attn = base_attn
         self.base_config = base_config
         self.layer_idx = layer_idx
@@ -87,6 +88,7 @@ class LiZAttention(nn.Module):
         self.mag_weight = mag_weight
         self.cross_gate = cross_gate
         self.max_chunk_size = max_chunk_size
+        self.linear_precision = linear_precision
         (
             self.num_heads,
             self.head_dim,
@@ -99,7 +101,8 @@ class LiZAttention(nn.Module):
             mode=operator_mode,
             max_chunk_size=max_chunk_size,
             linear_cache=linear_cache,
-        ).to(dtype=torch.float32)
+            linear_precision=linear_precision,
+        )
         self.pool_g = nn.AdaptiveAvgPool1d(
             output_size=self.head_dim * self.num_key_value_heads
         )
@@ -188,9 +191,9 @@ class LiZAttention(nn.Module):
         f_g = torch.clamp(f_g, min=-gate_norm, max=-1e-6)
         w_g = torch.clamp(w_g, min=1e-6, max=1 - 1e-6)
 
-        # Convert to float32 for numerical stability and get model dtype
+        # Convert to linear_precision (float32) for numerical stability and get model dtype
         q, k, v, f_g, w_g = (
-            x.to(torch.float32).contiguous() for x in (q, k, v, f_g, w_g)
+            x.to(self.linear_precision).contiguous() for x in (q, k, v, f_g, w_g)
         )
         g = (f_g, w_g)
 
@@ -295,6 +298,11 @@ class LiZAttention(nn.Module):
             )  # complex cross product (unlinear interaction)
         else:
             output_attention = softmax_weighted + linear_weighted  # classic
+
+        if torch.allclose(softmax_weighted, output_attention):
+            logger.info(
+                f"[LOG] layer : {self.layer_idx}, softmax_weighted and output_attention are close."
+            )
         # Final output
         return ensure_stability(output_attention, min_val=-1e4, max_val=1e4)
 
@@ -363,6 +371,7 @@ def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-a
     mag_weight: float = 0.5,
     cross_gate: bool = False,
     max_chunk_size: int = 64,
+    linear_precision: torch.dtype = torch.float32,
     max_self_attn_length: Optional[int] = None,  # unnecessary
 ):
     """Replace target modules in a model with LiZAttention."""
@@ -389,6 +398,7 @@ def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-a
                     mag_weight=mag_weight,
                     cross_gate=cross_gate,
                     max_chunk_size=max_chunk_size,
+                    linear_precision=linear_precision,
                 ),
             )
     return model, linear_cache
@@ -414,6 +424,15 @@ class TpttModel(PreTrainedModel):
         super().__init__(config, **kwargs)
         repo_or_path = getattr(config, "_base_path", None) or config._name_or_path
 
+        if (  # Ensure attention implementation is set (change stability after training)
+            hasattr(config, "force_attn_implementation")
+            and config.force_attn_implementation is not None
+        ):
+            kwargs["attn_implementation"] = config.force_attn_implementation
+            logger.warning(
+                "Attention implementation is: %s", config.force_attn_implementation
+            )
+
         # 1. Load backbone TODO : support no model.safetensors
         self.backbone = AutoModelForCausalLM.from_pretrained(
             config.base_model_name, **kwargs
@@ -435,8 +454,9 @@ class TpttModel(PreTrainedModel):
                 )
 
     def load_peft_safetensors(self, src, token=None):
-        # src: local dir or repo_id
+        """Load LoRA/PEFT weights and adapt keys if needed"""
         fname = "adapter_model.safetensors"
+        # Find file path
         if os.path.isdir(src):
             path = os.path.join(src, fname)
             if not os.path.exists(path):
@@ -445,10 +465,34 @@ class TpttModel(PreTrainedModel):
             if fname not in list_repo_files(src, token=token):
                 return
             path = hf_hub_download(src, fname, token=token)
+
+        # Load weights from safetensors
         with safe_open(path, framework="pt") as f:
-            self.backbone.load_state_dict(
-                {k: f.get_tensor(k) for k in f.keys()}, strict=False
-            )
+            state_dict = {k: f.get_tensor(k) for k in f.keys()}
+
+        # Adapt LoRA keys if needed (add .default if expected by the model)
+        def adapt_lora_keys(sd):
+            new_sd = {}
+            for k, v in sd.items():
+                if (
+                    k.endswith("lora_A.weight") or k.endswith("lora_B.weight")
+                ) and k.replace(
+                    ".weight", ".default.weight"
+                ) in self.backbone.state_dict():
+                    k = k.replace(".weight", ".default.weight")
+                new_sd[k] = v
+            return new_sd
+
+        state_dict = adapt_lora_keys(state_dict)
+        # Load into model
+        missing, unexpected = self.backbone.load_state_dict(
+            state_dict, strict=False, assign=True
+        )
+        missing_lora = [k for k in missing if "lora" in k]
+        if missing_lora:
+            logger.warning("Missing LoRA keys: %s", missing_lora)
+        if unexpected:
+            logger.warning("Unexpected keys: %s", unexpected)
 
     @staticmethod
     def inject_liza_attention(
@@ -482,6 +526,7 @@ class TpttModel(PreTrainedModel):
             mag_weight=config.mag_weight,
             cross_gate=config.cross_gate,
             max_chunk_size=config.max_chunk_size,
+            linear_precision=config.linear_precision,
         )
 
     def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
@@ -566,7 +611,12 @@ class LinearAttention(nn.Module):
     }
 
     def __init__(
-        self, layer_idx, mode="delta_rule", max_chunk_size=64, linear_cache=None
+        self,
+        layer_idx,
+        mode="delta_rule",
+        max_chunk_size=64,
+        linear_cache=None,
+        linear_precision=torch.float32,
     ):
         super().__init__()
         self.layer_idx = layer_idx
@@ -582,6 +632,7 @@ class LinearAttention(nn.Module):
 
         self.max_chunk_size = max_chunk_size
         self.linear_cache = linear_cache or LCache()
+        self.linear_precision = linear_precision
 
     def compute_gate(self, beta):
         """
@@ -632,12 +683,12 @@ class LinearAttention(nn.Module):
         """
         Forward pass for the attention operator.
         """
-        # Ensure float32 for numerical stability
-        q, k, v = [x.to(torch.float32) for x in (q, k, v)]
+        # Ensure linear_precision for numerical stability (float32)
+        q, k, v = [x.to(self.linear_precision) for x in (q, k, v)]
         if isinstance(beta, (tuple, list)):
-            beta = tuple(b.to(torch.float32) for b in beta)
+            beta = tuple(b.to(self.linear_precision) for b in beta)
         else:
-            beta = beta.to(torch.float32)
+            beta = beta.to(self.linear_precision)
 
         gate = self.compute_gate(beta)
 
@@ -646,10 +697,10 @@ class LinearAttention(nn.Module):
         recurrent_state, qkv_buffers = self.get_cache(use_cache)
 
         if qkv_buffers is not None:
-            q = torch.cat([qkv_buffers[0], q], dim=2).to(torch.float32)
-            k = torch.cat([qkv_buffers[1], k], dim=2).to(torch.float32)
-            v = torch.cat([qkv_buffers[2], v], dim=2).to(torch.float32)
-            gate = torch.cat([qkv_buffers[3], gate], dim=2).to(torch.float32)
+            q = torch.cat([qkv_buffers[0], q], dim=2).to(self.linear_precision)
+            k = torch.cat([qkv_buffers[1], k], dim=2).to(self.linear_precision)
+            v = torch.cat([qkv_buffers[2], v], dim=2).to(self.linear_precision)
+            gate = torch.cat([qkv_buffers[3], gate], dim=2).to(self.linear_precision)
 
         output, state = self.chunk_delta_product_forward(
             q,
@@ -662,6 +713,7 @@ class LinearAttention(nn.Module):
             linear=self.linear,
             initial_state=recurrent_state,
             use_checkpoint=not (use_cache),
+            linear_precision=self.linear_precision,
         )
 
         # Save cache if needed
@@ -681,6 +733,7 @@ class LinearAttention(nn.Module):
         linear=True,
         initial_state=None,
         use_checkpoint=True,
+        linear_precision=torch.float32,
     ):
         """
         DeltaProduct implementation https://arxiv.org/abs/2502.10297
@@ -706,7 +759,7 @@ class LinearAttention(nn.Module):
             h_0_base = initial_recurrent_state[:, :, -1, :, :].clone()
 
             propagated_state_for_next_chunk_boundary = torch.zeros(
-                B, H, n_orders, D, D, device=q_chunks.device, dtype=torch.float32
+                B, H, n_orders, D, D, device=q_chunks.device, dtype=linear_precision
             )
 
             def process_one_chunk(
@@ -721,10 +774,9 @@ class LinearAttention(nn.Module):
                     chunk_n_total,
                     D,
                     device=q_chunk_params.device,
-                    dtype=torch.float32,
+                    dtype=linear_precision,
                 )
                 o_inter_current_chunk = torch.zeros_like(o_intra_current_chunk)
-                # TODO: For n_orders == 1, optimize memory by not allocating per-token state
                 current_accumulated_state_per_token = (
                     h_0_base.unsqueeze(2)
                     .expand(-1, -1, current_chunk_size, -1, -1)
@@ -737,7 +789,7 @@ class LinearAttention(nn.Module):
                     D,
                     D,
                     device=q_chunk_params.device,
-                    dtype=torch.float32,
+                    dtype=linear_precision,
                 )
                 for step in range(n_orders):
                     idx_virtual_tokens = (
@@ -758,7 +810,7 @@ class LinearAttention(nn.Module):
                             state_input_for_this_step,
                         )
                         .squeeze(-2)
-                        .to(dtype=torch.float32)
+                        .to(dtype=linear_precision)
                     )
 
                     u_val = u_s - k_trans_h_old
@@ -766,13 +818,13 @@ class LinearAttention(nn.Module):
                     o_inter_current_chunk[:, :, idx_virtual_tokens, :] = (
                         torch.matmul(q_s.unsqueeze(-2), state_input_for_this_step)
                         .squeeze(-2)
-                        .to(dtype=torch.float32)
+                        .to(dtype=linear_precision)
                     )
 
                     ## BLAS/cuBLAS einsum "bhcd,bhcd->bhcd"
                     o_intra_current_chunk[:, :, idx_virtual_tokens, :] = (
                         q_s * u_val
-                    ).to(dtype=torch.float32)
+                    ).to(dtype=linear_precision)
 
                     outer_product_term = torch.matmul(
                         w_s.unsqueeze(-1), u_val.unsqueeze(-2)
@@ -784,11 +836,11 @@ class LinearAttention(nn.Module):
                         new_state_i_per_token, min_val=-1e4, max_val=1e4
                     )
                     current_accumulated_state_per_token = new_state_i_per_token.to(
-                        dtype=torch.float32
+                        dtype=linear_precision
                     )
                     propagated_state[:, :, step] = current_accumulated_state_per_token[
                         :, :, -1, :, :
-                    ].to(dtype=torch.float32)
+                    ].to(dtype=linear_precision)
                 # Return all needed for next chunk
                 return (
                     o_intra_current_chunk,
@@ -803,7 +855,11 @@ class LinearAttention(nn.Module):
                 u_chunk_params = U[:, :, chunk_idx_inner]
 
                 # Checkpointed call if training
-                call = checkpoint if use_checkpoint else lambda f, *a: f(*a)
+                call = (
+                    partial(checkpoint, use_reentrant=False)
+                    if use_checkpoint
+                    else lambda f, *a: f(*a)
+                )
                 o_intra, o_inter, h_0_base, propagated_state = call(
                     process_one_chunk,
                     q_chunk_params,
@@ -820,7 +876,7 @@ class LinearAttention(nn.Module):
                 if linear_activation
                 else F.gelu(
                     propagated_state_for_next_chunk_boundary, approximate="tanh"
-                ).to(dtype=torch.float32)
+                ).to(dtype=linear_precision)
             )
             return output_inner, final_propagated_state_for_all_orders
 
@@ -847,37 +903,37 @@ class LinearAttention(nn.Module):
         T = ensure_stability(T, min_val=-1e4, max_val=1e4)
 
         # size : N = chunk_size * n
-        inv_T = fast_invert_matrix(T)  # [(...),N,N]
+        inv_T = fast_invert_matrix(T, dtype=linear_precision)  # [(...),N,N]
 
         W = ensure_stability(torch.matmul(inv_T, k_beta), min_val=-1e4, max_val=1e4)
         U = ensure_stability(torch.matmul(inv_T, v_beta), min_val=-1e4, max_val=1e4)
 
         state_shape = (batch_size, num_heads, n, head_dim, head_dim)
         if initial_state is not None and initial_state.shape == state_shape:
-            state = initial_state.to(device=query.device, dtype=torch.float32)
+            state = initial_state.to(device=query.device, dtype=linear_precision)
         else:
             state = torch.full(
                 state_shape,
                 fill_value=1e-6,
                 device=query.device,
-                dtype=torch.float32,
+                dtype=linear_precision,
             )
 
         output, final_state = sequential_delta_product_scan(
-            q_chunks.to(dtype=torch.float32),
-            W.to(dtype=torch.float32),
-            U.to(dtype=torch.float32),
+            q_chunks.to(dtype=linear_precision),
+            W.to(dtype=linear_precision),
+            U.to(dtype=linear_precision),
             n,
             linear,
             chunk_size,
-            state.to(dtype=torch.float32),
+            state.to(dtype=linear_precision),
         )
 
         idx_last_order = torch.arange(chunk_size, device=output.device) * n + (n - 1)
         output = output[:, :, :, idx_last_order, :]  # [B, H, num_chunks, chunk_size, D]
         output = output.reshape(batch_size, num_heads, seq_len, head_dim)
 
-        return output.to(dtype=torch.float32), final_state.to(dtype=torch.float32)
+        return output.to(dtype=linear_precision), final_state.to(dtype=linear_precision)
 
 
 def chunk_sequence(x, num_chunks, chunk_size):

@@ -1,7 +1,9 @@
 from unittest.mock import MagicMock
 
+import pytest
+
 from src.tptt.modeling_tptt import LiZAttention
-from src.tptt.train_tptt import AdjustMaGWeightCallback
+from src.tptt.train_tptt import AdjustMaGWeightCallback, SaveBestModelCallback
 
 
 def test_adjust_mag_weight_callback_simple():
@@ -84,3 +86,25 @@ def test_callback_updates_multiple_modules():
     expected = 0.01 + (0.5 - 0.01) * (50 / 100)
     assert liz1.mag_weight == expected
     assert liz2.mag_weight == expected
+
+
+@pytest.mark.parametrize(
+    "previous_best, eval_loss, expected_best, expected_should_save",
+    [
+        (float("inf"), 0.8, 0.8, True),
+        (0.8, 0.9, 0.8, False),  # no update
+        (0.8, 0.7, 0.7, True),  # new update
+    ],
+)
+def test_save_best_model_callback_parametrized(
+    previous_best, eval_loss, expected_best, expected_should_save
+):
+    callback = SaveBestModelCallback()
+    callback.best_metric = previous_best
+    args, state = MagicMock(), MagicMock()
+    control = MagicMock()
+    metrics = {"eval_loss": eval_loss}
+
+    callback.on_evaluate(args, state, control, metrics)
+    assert callback.best_metric == expected_best
+    assert control.should_save is expected_should_save
