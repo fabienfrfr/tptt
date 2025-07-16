@@ -74,6 +74,8 @@ class LiZAttention(nn.Module):
         cross_gate: bool = False,
         max_chunk_size: int = 64,
         linear_precision: Union[str, torch.dtype] = "float32",
+        padding_side: str = "right",  # for tokenizer
+        disable_linear_attn: bool = False,
     ):
         super().__init__()
         if isinstance(linear_precision, str):
@@ -89,6 +91,9 @@ class LiZAttention(nn.Module):
         self.cross_gate = cross_gate
         self.max_chunk_size = max_chunk_size
         self.linear_precision = linear_precision
+        self.padding_side = padding_side
+        self.disable_linear_attn = disable_linear_attn
+
         (
             self.num_heads,
             self.head_dim,
@@ -161,7 +166,7 @@ class LiZAttention(nn.Module):
         v = ensure_stability(v, min_val=-1e4, max_val=1e4)
         return q, k, v, out_proj
 
-    def _prepare_attn_input(self, q, k, v, gate_norm):
+    def _prepare_attn_input(self, q, k, v):
         # Forget and Write Gating for linear attn (abusive term)
         f_g, w_g = self.pool_g(k), self.pool_g(v)
 
@@ -180,16 +185,18 @@ class LiZAttention(nn.Module):
         f_g = f_g.repeat_interleave(self.num_key_value_groups, dim=1)
         w_g = w_g.repeat_interleave(self.num_key_value_groups, dim=1)
 
+        ## DeltaNet-style: Silu activation and normalization
+        q = F.normalize(F.silu(q), p=2, dim=-1, eps=1e-6)
+        k = F.normalize(F.silu(k), p=2, dim=-1, eps=1e-6)
+
         ## linear stability part
-        q = torch.clamp(F.softmax(q, dim=-1), min=1e-6, max=1 - 1e-6)
-        k = torch.clamp(F.softmax(k, dim=-1), min=1e-6, max=1 - 1e-6)
-        # scale by head_dim**-0.5
+        q = torch.clamp(q, min=1e-6, max=1 - 1e-6)
+        k = torch.clamp(k, min=1e-6, max=1 - 1e-6)
         v = ensure_stability(v * self.scaling, min_val=-1e4, max_val=1e4)
 
-        f_g = F.logsigmoid(f_g) / gate_norm  # pylint: disable=not-callable
-        w_g = torch.exp(F.logsigmoid(w_g) / gate_norm)  # pylint: disable=not-callable
-        f_g = torch.clamp(f_g, min=-gate_norm, max=-1e-6)
-        w_g = torch.clamp(w_g, min=1e-6, max=1 - 1e-6)
+        # Apply sigmoid to forget and write gates
+        f_g = torch.clamp(torch.sigmoid(f_g), min=1e-6, max=1 - 1e-6)
+        w_g = torch.clamp(torch.sigmoid(w_g), min=1e-6, max=1 - 1e-6)
 
         # Convert to linear_precision (float32) for numerical stability and get model dtype
         q, k, v, f_g, w_g = (
@@ -210,6 +217,8 @@ class LiZAttention(nn.Module):
             **kwargs,  # pass use_cache and other kwargs
         )
         o_lin = rearrange(o_lin, "b h n d -> b n (h d)").to(tensor_dtype)
+        # rms normalization and projection
+        o_lin = o_lin / o_lin.pow(2).mean(dim=-1, keepdim=True).add(1e-6).sqrt()
         o_lin = out_proj(o_lin)
 
         # Ensure stability
@@ -267,8 +276,6 @@ class LiZAttention(nn.Module):
         # Force cast typing, shape : [b n (h d)]
         o_lin = o_lin.to(tensor_dtype)
         o_base = o_base.to(tensor_dtype)
-        # o_lin normalization RMSNorm
-        o_lin = o_lin / o_lin.pow(2).mean(dim=-1, keepdim=True).add(eps).sqrt()
         # feature scaling
         if self.base_scale_attn:
             scaler = o_base.pow(2).mean(dim=-1, keepdim=True).add(eps).sqrt()
@@ -319,9 +326,9 @@ class LiZAttention(nn.Module):
         if self.training:
             kwargs.pop("past_key_value", None)
             kwargs["use_cache"] = False
-        else:
-            # Force evaluation
-            kwargs["use_cache"] = True
+        elif "use_cache" not in kwargs:
+            kwargs.pop("past_key_value", None)
+            kwargs["use_cache"] = False
 
         kwargs.pop("position_ids", None)  # obsolete
 
@@ -331,11 +338,10 @@ class LiZAttention(nn.Module):
         # Manage attention mask (with padding)
         if attention_mask is not None:
             # attention_mask -> [batch, seq], v: [batch, seq, ...]
-            v = apply_linear_attention_mask(attention_mask, v)
+            v = apply_linear_attention_mask(attention_mask, v, self.padding_side)
 
         # Prepare inputs tensor for linear attn
-        gate_norm = kwargs.get("gate_logit_normalizer", 16)
-        q, k, v, g = self._prepare_attn_input(q, k, v, gate_norm)
+        q, k, v, g = self._prepare_attn_input(q, k, v)
 
         # Process linear attn from mask
         o_lin = self._process_linear_attn(q, k, v, g, out_proj, tensor_dtype, kwargs)
@@ -348,8 +354,8 @@ class LiZAttention(nn.Module):
         # Prepare output mixing
         o_lin, o_base = self._prepare_attn_mixin(o_lin, o_base, tensor_dtype, eps=1e-5)
 
-        # Apply Memory as Gate in self-attention (with max length management)
-        out = self._apply_mag(o_lin, o_base)
+        # Apply Memory as Gate in self-attention (with length management and ablation)
+        out = o_base if self.disable_linear_attn else self._apply_mag(o_lin, o_base)
 
         # Return output following transformer convention
         if expected_attn_mode == 3:
@@ -373,6 +379,7 @@ def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-a
     max_chunk_size: int = 64,
     linear_precision: torch.dtype = torch.float32,
     max_self_attn_length: Optional[int] = None,  # unnecessary
+    padding_side: str = "right",  # for tokenizer
 ):
     """Replace target modules in a model with LiZAttention."""
     linear_cache = linear_cache or LCache()
@@ -399,6 +406,7 @@ def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-a
                     cross_gate=cross_gate,
                     max_chunk_size=max_chunk_size,
                     linear_precision=linear_precision,
+                    padding_side=padding_side,
                 ),
             )
     return model, linear_cache
@@ -500,9 +508,7 @@ class TpttModel(PreTrainedModel):
         config,
         linear_cache,
     ):
-        """
-        Inject LiZAttention into the specified target modules of the base model.
-        """
+        """Inject LiZAttention into the specified target modules of the base model."""
         # Find target modules by suffix (e.g., "attn", "attention")
         target_modules = [
             name
@@ -527,6 +533,7 @@ class TpttModel(PreTrainedModel):
             cross_gate=config.cross_gate,
             max_chunk_size=config.max_chunk_size,
             linear_precision=config.linear_precision,
+            padding_side=config.padding_side,
         )
 
     def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
@@ -536,8 +543,9 @@ class TpttModel(PreTrainedModel):
         if self.training:
             kwargs["use_cache"] = False
             kwargs.pop("num_items_in_batch", None)
-        else:
-            kwargs["use_cache"] = True
+        elif "use_cache" not in kwargs:  # evaluation
+            kwargs.pop("num_items_in_batch", None)
+            kwargs["use_cache"] = False
         return self.backbone(
             input_ids=input_ids, attention_mask=attention_mask, labels=labels, **kwargs
         )
@@ -606,8 +614,9 @@ class LinearAttention(nn.Module):
         "delta_rule_kv_gelu": dict(
             order=1, gate_type="kv", linear=False, trick="derivative"
         ),
-        "delta_product": dict(order=2, gate_type="kv", linear=True, trick="derivative"),
-        "delta_product_r": dict(order=2, gate_type="kv", linear=True, trick="rotative"),
+        "delta_product": dict(order=2, gate_type="k", linear=True, trick="derivative"),
+        "delta_product_r": dict(order=2, gate_type="k", linear=True, trick="rotative"),
+        "delta_product_c": dict(order=2, gate_type="k", linear=True, trick="combined"),
     }
 
     def __init__(
@@ -639,11 +648,11 @@ class LinearAttention(nn.Module):
         Compute the gating tensor according to the gate_type.
         """
         if self.gate_type == "k":
-            return torch.clamp(torch.exp(beta[0]), min=1e-6, max=1 - 1e-6)
+            return torch.clamp(beta[0], min=1e-6, max=1 - 1e-6)
         elif self.gate_type == "v":
             return torch.clamp(beta[1], min=1e-6, max=1 - 1e-6)
         elif self.gate_type == "kv":
-            return torch.clamp(torch.exp(beta[0]) * beta[1], min=1e-6, max=1 - 1e-6)
+            return torch.clamp(beta[0] * beta[1], min=1e-6, max=1 - 1e-6)
         else:
             raise ValueError(f"Unsupported gate_type: {self.gate_type}")
 
@@ -694,13 +703,15 @@ class LinearAttention(nn.Module):
 
         # Retrieve cache if needed
         use_cache = kwargs.get("use_cache", False)
-        recurrent_state, qkv_buffers = self.get_cache(use_cache)
+        recurrent_state, qkvb = self.get_cache(use_cache)
 
-        if qkv_buffers is not None:
-            q = torch.cat([qkv_buffers[0], q], dim=2).to(self.linear_precision)
-            k = torch.cat([qkv_buffers[1], k], dim=2).to(self.linear_precision)
-            v = torch.cat([qkv_buffers[2], v], dim=2).to(self.linear_precision)
-            gate = torch.cat([qkv_buffers[3], gate], dim=2).to(self.linear_precision)
+        if qkvb is not None and qkvb[0].shape == q.shape:
+            q = torch.cat([qkvb[0].to(q.device), q], dim=2).to(self.linear_precision)
+            k = torch.cat([qkvb[1].to(q.device), k], dim=2).to(self.linear_precision)
+            v = torch.cat([qkvb[2].to(q.device), v], dim=2).to(self.linear_precision)
+            gate = torch.cat([qkvb[3].to(q.device), gate], dim=2).to(
+                self.linear_precision
+            )
 
         output, state = self.chunk_delta_product_forward(
             q,
@@ -736,149 +747,9 @@ class LinearAttention(nn.Module):
         linear_precision=torch.float32,
     ):
         """
-        DeltaProduct implementation https://arxiv.org/abs/2502.10297
         Chunkwise parallel implementation https://arxiv.org/abs/2406.06484
+        For each chunk, processes chunk_size * n_orders steps (virtual tokens) in order.
         """
-
-        def sequential_delta_product_scan(
-            q_chunks,
-            W,
-            U,
-            n_orders,
-            linear_activation,
-            current_chunk_size,
-            initial_recurrent_state,
-        ):
-            """
-            For each chunk, processes chunk_size * n_orders steps (virtual tokens) in order.
-            Implements the per-token Householder state updates.
-            """
-            B, H, num_chunks_inner, chunk_n_total, D = q_chunks.shape
-            output_inner = torch.empty_like(q_chunks)
-            # initial_recurrent_state is H_{last_token_of_prev_chunk, n-1} ([B, H, D, D])
-            h_0_base = initial_recurrent_state[:, :, -1, :, :].clone()
-
-            propagated_state_for_next_chunk_boundary = torch.zeros(
-                B, H, n_orders, D, D, device=q_chunks.device, dtype=linear_precision
-            )
-
-            def process_one_chunk(
-                q_chunk_params, w_chunk_params, u_chunk_params, h_0_base
-            ):
-                """
-                Process a single chunk (with per-token state for n_orders > 1).
-                """
-                o_intra_current_chunk = torch.zeros(
-                    B,
-                    H,
-                    chunk_n_total,
-                    D,
-                    device=q_chunk_params.device,
-                    dtype=linear_precision,
-                )
-                o_inter_current_chunk = torch.zeros_like(o_intra_current_chunk)
-                current_accumulated_state_per_token = (
-                    h_0_base.unsqueeze(2)
-                    .expand(-1, -1, current_chunk_size, -1, -1)
-                    .clone()
-                )  # [B, H, current_chunk_size, D, D]
-                propagated_state = torch.zeros(
-                    B,
-                    H,
-                    n_orders,
-                    D,
-                    D,
-                    device=q_chunk_params.device,
-                    dtype=linear_precision,
-                )
-                for step in range(n_orders):
-                    idx_virtual_tokens = (
-                        torch.arange(current_chunk_size, device=q_chunk_params.device)
-                        * n_orders
-                        + step
-                    )
-                    q_s = q_chunk_params[:, :, idx_virtual_tokens, :]
-                    w_s = w_chunk_params[:, :, idx_virtual_tokens, :]
-                    u_s = u_chunk_params[:, :, idx_virtual_tokens, :]
-
-                    state_input_for_this_step = current_accumulated_state_per_token
-
-                    ## BLAS/cuBLAS einsum "bhcd,bhcdd->bhcd"
-                    k_trans_h_old = (
-                        torch.matmul(
-                            w_s.unsqueeze(-2),
-                            state_input_for_this_step,
-                        )
-                        .squeeze(-2)
-                        .to(dtype=linear_precision)
-                    )
-
-                    u_val = u_s - k_trans_h_old
-
-                    o_inter_current_chunk[:, :, idx_virtual_tokens, :] = (
-                        torch.matmul(q_s.unsqueeze(-2), state_input_for_this_step)
-                        .squeeze(-2)
-                        .to(dtype=linear_precision)
-                    )
-
-                    ## BLAS/cuBLAS einsum "bhcd,bhcd->bhcd"
-                    o_intra_current_chunk[:, :, idx_virtual_tokens, :] = (
-                        q_s * u_val
-                    ).to(dtype=linear_precision)
-
-                    outer_product_term = torch.matmul(
-                        w_s.unsqueeze(-1), u_val.unsqueeze(-2)
-                    )
-                    new_state_i_per_token = (
-                        state_input_for_this_step + outer_product_term
-                    )
-                    new_state_i_per_token = ensure_stability(
-                        new_state_i_per_token, min_val=-1e4, max_val=1e4
-                    )
-                    current_accumulated_state_per_token = new_state_i_per_token.to(
-                        dtype=linear_precision
-                    )
-                    propagated_state[:, :, step] = current_accumulated_state_per_token[
-                        :, :, -1, :, :
-                    ].to(dtype=linear_precision)
-                # Return all needed for next chunk
-                return (
-                    o_intra_current_chunk,
-                    o_inter_current_chunk,
-                    current_accumulated_state_per_token[:, :, -1, :, :],  # new h_0_base
-                    propagated_state,
-                )
-
-            for chunk_idx_inner in range(num_chunks_inner):
-                q_chunk_params = q_chunks[:, :, chunk_idx_inner]
-                w_chunk_params = W[:, :, chunk_idx_inner]
-                u_chunk_params = U[:, :, chunk_idx_inner]
-
-                # Checkpointed call if training
-                call = (
-                    partial(checkpoint, use_reentrant=False)
-                    if use_checkpoint
-                    else lambda f, *a: f(*a)
-                )
-                o_intra, o_inter, h_0_base, propagated_state = call(
-                    process_one_chunk,
-                    q_chunk_params,
-                    w_chunk_params,
-                    u_chunk_params,
-                    h_0_base,
-                )
-
-                output_inner[:, :, chunk_idx_inner] = o_intra + o_inter
-                propagated_state_for_next_chunk_boundary = propagated_state
-
-            final_propagated_state_for_all_orders = (
-                propagated_state_for_next_chunk_boundary
-                if linear_activation
-                else F.gelu(
-                    propagated_state_for_next_chunk_boundary, approximate="tanh"
-                ).to(dtype=linear_precision)
-            )
-            return output_inner, final_propagated_state_for_all_orders
 
         # --- Main chunk_delta_product_forward logic ---
 
@@ -914,7 +785,7 @@ class LinearAttention(nn.Module):
         else:
             state = torch.full(
                 state_shape,
-                fill_value=1e-6,
+                fill_value=1e-6,  # stability if unlinear activation
                 device=query.device,
                 dtype=linear_precision,
             )
@@ -927,6 +798,8 @@ class LinearAttention(nn.Module):
             linear,
             chunk_size,
             state.to(dtype=linear_precision),
+            linear_precision=linear_precision,
+            use_checkpoint=use_checkpoint,
         )
 
         idx_last_order = torch.arange(chunk_size, device=output.device) * n + (n - 1)
@@ -934,6 +807,123 @@ class LinearAttention(nn.Module):
         output = output.reshape(batch_size, num_heads, seq_len, head_dim)
 
         return output.to(dtype=linear_precision), final_state.to(dtype=linear_precision)
+
+
+def sequential_delta_product_scan(
+    q_chunks,
+    W,
+    U,
+    n_orders,
+    linear_activation,
+    current_chunk_size,
+    initial_recurrent_state,
+    linear_precision,
+    use_checkpoint,
+):
+    """
+    DeltaProduct implementation https://arxiv.org/abs/2502.10297
+    Implements the per-token Householder state updates.
+    """
+    B, H, num_chunks_inner, chunk_n_total, D = q_chunks.shape
+    output_inner = torch.empty_like(q_chunks)
+    # initial_recurrent_state is H_{last_token_of_prev_chunk, n-1} ([B, H, D, D])
+    h_0_base = initial_recurrent_state[:, :, -1, :, :].clone()
+
+    def process_one_chunk(q_chunk_params, w_chunk_params, u_chunk_params, h_0_base):
+        """
+        Process a single chunk (with per-token state for n_orders > 1).
+        """
+        o_intra_current_chunk = torch.zeros(
+            B,
+            H,
+            chunk_n_total,
+            D,
+            device=q_chunk_params.device,
+            dtype=linear_precision,
+        )
+        o_inter_current_chunk = torch.zeros_like(o_intra_current_chunk)
+        current_accumulated_state_per_token = (
+            h_0_base.unsqueeze(2).expand(-1, -1, current_chunk_size, -1, -1).clone()
+        )  # [B, H, current_chunk_size, D, D]
+
+        for step in range(n_orders):
+            idx_virtual_tokens = (
+                torch.arange(current_chunk_size, device=q_chunk_params.device)
+                * n_orders
+                + step
+            )
+            q_s = q_chunk_params[:, :, idx_virtual_tokens, :]
+            w_s = w_chunk_params[:, :, idx_virtual_tokens, :]
+            u_s = u_chunk_params[:, :, idx_virtual_tokens, :]
+
+            state_input_for_this_step = current_accumulated_state_per_token
+
+            ## BLAS/cuBLAS einsum "bhcd,bhcdd->bhcd"
+            k_trans_h_old = (
+                torch.matmul(
+                    w_s.unsqueeze(-2),
+                    state_input_for_this_step,
+                )
+                .squeeze(-2)
+                .to(dtype=linear_precision)
+            )
+
+            u_val = u_s - k_trans_h_old
+
+            o_inter_current_chunk[:, :, idx_virtual_tokens, :] = (
+                torch.matmul(q_s.unsqueeze(-2), state_input_for_this_step)
+                .squeeze(-2)
+                .to(dtype=linear_precision)
+            )
+
+            ## BLAS/cuBLAS einsum "bhcd,bhcd->bhcd"
+            o_intra_current_chunk[:, :, idx_virtual_tokens, :] = (q_s * u_val).to(
+                dtype=linear_precision
+            )
+
+            outer_product_term = torch.matmul(w_s.unsqueeze(-1), u_val.unsqueeze(-2))
+            new_state_i_per_token = state_input_for_this_step + outer_product_term
+            new_state_i_per_token = ensure_stability(
+                new_state_i_per_token, min_val=-1e4, max_val=1e4
+            )
+            current_accumulated_state_per_token = new_state_i_per_token.to(
+                dtype=linear_precision
+            )
+        # Return all needed for next chunk
+        return (
+            o_intra_current_chunk,
+            o_inter_current_chunk,
+            current_accumulated_state_per_token[:, :, -1, :, :],  # new h_0_base
+        )
+
+    for chunk_idx_inner in range(num_chunks_inner):
+        q_chunk_params = q_chunks[:, :, chunk_idx_inner]
+        w_chunk_params = W[:, :, chunk_idx_inner]
+        u_chunk_params = U[:, :, chunk_idx_inner]
+
+        # Checkpointed call if training
+        call = (
+            partial(checkpoint, use_reentrant=False)
+            if use_checkpoint
+            else lambda f, *a: f(*a)
+        )
+        o_intra, o_inter, h_0_base = call(
+            process_one_chunk,
+            q_chunk_params,
+            w_chunk_params,
+            u_chunk_params,
+            h_0_base,
+        )
+        if not (linear_activation):  # unlinear activation between chunks
+            h_0_norm = h_0_base.norm(p=2, dim=-1, keepdim=True) + 1e-6
+            h_0_base = (h_0_norm / 2.0) * (
+                F.gelu(2.0 * h_0_base / h_0_norm, approximate="tanh").to(
+                    dtype=linear_precision
+                )
+            )
+        output_inner[:, :, chunk_idx_inner] = o_intra + o_inter
+
+    return output_inner, h_0_base
 
 
 def chunk_sequence(x, num_chunks, chunk_size):
@@ -1016,13 +1006,13 @@ def find_embedding_lm(module):
 def ensure_stability(tensor, min_val=-1e4, max_val=1e4):
     """stability forcing"""
     dtype = tensor.dtype
-    center = (max_val - min_val) / 2
+    center = (max_val + min_val) / 2
     tensor = torch.clamp(tensor, min=min_val, max=max_val)
     tensor = torch.nan_to_num(tensor, nan=center, posinf=max_val, neginf=min_val)
     return tensor.to(dtype=dtype)
 
 
-def apply_linear_attention_mask(attention_mask, v):
+def apply_linear_attention_mask(attention_mask, v, padding_side="right"):
     """Extract if padding --> [B,S]"""
     if attention_mask.dim() == 4 and attention_mask.shape[1] == 1:
         mask = attention_mask.diagonal(dim1=-2, dim2=-1).squeeze(1)
@@ -1034,8 +1024,23 @@ def apply_linear_attention_mask(attention_mask, v):
                 if attention_mask.shape[i] == 1
             )
         )
-    # handle left padding : mask is [batch, seq] --> Broadcast to v [batch, seq, (...)]
-    mask = mask[:, -v.shape[-2] :][(...,) + (None,) * (v.dim() - 2)]
+    # Ensure cast to the same dtype as v and convert to binary mask
+    if not (
+        mask.dtype == torch.bool
+        or (
+            mask.dtype in [torch.uint8, torch.int32, torch.int64]
+            and mask.max() <= 1
+            and mask.min() >= 0
+        )
+    ):
+        mask = (mask >= 0).to(v.dtype)  # [-inf, 0, 0, -inf] --> [0, 1, 1, 0]
+    else:
+        mask = mask.to(v.dtype)
+    # mask is [batch, seq] --> Broadcast to v [batch, seq, (...)]
+    if padding_side == "left":
+        mask = mask[:, -v.shape[-2] :][(...,) + (None,) * (v.dim() - 2)]
+    else:  # right padding
+        mask = mask[:, : v.shape[-2]][(...,) + (None,) * (v.dim() - 2)]
     return v * mask
 
 
@@ -1125,3 +1130,14 @@ def soft_clamp(x, min_val=1e-6, max_val=1 - 1e-6):
     scale = (max_val - min_val) / 2
     center = (max_val + min_val) / 2
     return (torch.tanh((x - center) / scale) * scale + center).to(dtype=dtype)
+
+
+def describe(x, name="tensor"):
+    """Prints the shape, min, max, mean, and std of a tensor."""
+    stats = (x.min(), x.max(), x.mean(), x.std())
+    print(
+        f"{name} shape: {tuple(x.shape)}, "
+        + f"min: {stats[0]:.4g}, max: {stats[1]:.4g}, "
+        + f"mean: {stats[2]:.4g}, std: {stats[3]:.4g}, "
+        + f"dtype: {x.dtype}, device: {x.device}"
+    )

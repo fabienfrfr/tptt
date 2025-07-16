@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "tptt"
-version = "0.9.0"
+version = "0.10.1"
 description = "TPTT : Transforming Pretrained Transformers into Titans"
 authors = ["fabienfrfr <fabien.furfaro@gmail.com>"]
 license = "Apache-2.0"
@@ -13,7 +13,7 @@ packages = [
 [tool.poetry.dependencies]
 python = ">=3.10"
 torch = "*"
-# transformers = ">=4.45.0,<=4.49.0" # more GPU efficiency
+#transformers = ">=4.45.0,<=4.49.0" # more GPU efficiency
 transformers = ">=4.45.0"
 datasets = "*"
 ninja = "*"

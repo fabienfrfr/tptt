@@ -103,6 +103,7 @@ base_model_name="meta-llama/Llama-3.2-1B"
 config = tptt.TpttConfig(
     base_model_name=base_model_name,
     lora_config=lora_config,
+    padding_side="right", # see tokenizer
 )
 model = tptt.TpttModel(
     config, 
@@ -114,7 +115,7 @@ model = tptt.TpttModel(
 model.backbone.print_trainable_parameters()
 ```
 
-After that, it's classical training from Transformer library. But `AdjustMaGWeightCallback` it's used and optional.
+After that, it's classical training from Transformer library. But `LiZACallback` it's used and optional.
 
 ## Data Loading and Preparation
 
@@ -161,7 +162,7 @@ tokenized_dataset = raw_dataset.map(preprocess_fn, batched=True, remove_columns=
 initial_weight=0.01,
 final_weight=0.5,
 transition_step=100,
-liza_callback = tptt.AdjustMaGWeightCallback(
+liza_callback = tptt.LiZACallback(
             model,
             initial_weight=initial_weight,
             final_weight=final_weight,

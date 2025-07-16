@@ -309,9 +309,9 @@ The cache of intermediate states maintained by \texttt{LiZAttention} enables a r
 
 To adapt the TPTT architecture to downstream tasks, we employ Low-Rank Adaptation (LoRA)~\cite{hu2022lora, lora_hf}, a parameter-efficient fine-tuning technique that injects trainable low-rank matrices into selected projection layers while freezing the original model weights. This approach reduces the number of trainable parameters and memory requirements, while maintaining performance comparable to full fine-tuning~\cite{hu2022lora, lora_hf}. LoRA is configured with a rank of 8, $\alpha=16$, and a dropout rate of 0.05. Fine-tuning targets the main projection modules, specifically \texttt{[q\_proj, k\_proj, v\_proj, o\_proj]} for Llama/Mistral and \texttt{[qkv\_proj, out\_proj]} for OpenELM~\cite{lora_hf}.
 
-\subsection{Dynamic Memory as Gate Scheduling (LiZA MaG Callback)}
+\subsection{Dynamic Memory as Gate Scheduling (LiZA Callback)}
 
-A important component of the training process is the LiZA MaG callback, which dynamically adjusts the Memory as Gate (MaG) weighting parameter during training. The MaG weight is initialized at 0.01 and linearly increased to 0.5 over the first 100 steps, facilitating a smooth transition from reliance on vanilla (softmax) attention to linearized attention. This schedule allows the model to effectively balance the two attention mechanisms, optimizing performance throughout training. The callback is integrated directly into the training loop, ensuring adaptive control of the MaG parameter and enhancing the model's adaptability and efficiency.
+A important component of the training process is the LiZA callback, which dynamically adjusts the Memory as Gate (MaG) weighting parameter during training. The MaG weight is initialized at 0.01 and linearly increased to 0.5 over the first 100 steps, facilitating a smooth transition from reliance on vanilla (softmax) attention to linearized attention. This schedule allows the model to effectively balance the two attention mechanisms, optimizing performance throughout training. The callback is integrated directly into the training loop, ensuring adaptive control of the MaG parameter and enhancing the model's adaptability and efficiency.
 
 
 \section{Experiments and Results}
@@ -346,7 +346,7 @@ Table~\ref{tab:training-metrics} summarizes the training performance metrics for
 % AJouter les entrainments de deltaproduct, cross-mag, et avec non linearité entre chunk. --> tester egalement les modeles quantizé "OLMoE et Mistral 7b" pour avoir des resultats sur des modeles plus gros et mix.
 
 
-\subsection{MaG callback comparizon Results}
+\subsection{Callback comparizon Results}
 
 % Comparer les resultats de l'entrainement de modele avec MaG pour DeltaRule n=1 pour plusieurs gap de callback ! et pour des alpha elevée --> 90% delta net
 

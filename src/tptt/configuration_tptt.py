@@ -51,6 +51,7 @@ class TpttConfig(PretrainedConfig):
         max_chunk_size: int = 64,
         linear_precision: Union[str, torch.dtype] = "float32",
         lora_config: Optional[dict] = None,  # only serialized accepted
+        padding_side: Optional[str] = None,  # for tokenizer, default "right"
         **kwargs,
     ):
         # If base_model_config is provided, load it and merge with this config
@@ -96,6 +97,11 @@ class TpttConfig(PretrainedConfig):
                 self.lora_config["peft_type"] = self.lora_config["peft_type"].value
             self.lora_config = convert_sets_to_lists(self.lora_config)
 
+        if padding_side is None:
+            self.padding_side = "right"
+            print("Warning: padding_side is None, defaulting to 'right'.")
+        else:
+            self.padding_side = padding_side
         super().__init__(**kwargs)  # flush unconsistend pretrained parameters (?)
         # Copy class attributes to instance for serialization (save dict)
         self.model_type = self.__class__.model_type
