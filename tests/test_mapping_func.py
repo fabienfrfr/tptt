@@ -3,7 +3,7 @@
 
 import pytest
 
-from src.tptt.modeling_tptt import LinearAttention
+from src.tptt.modeling_tptt import LinearAttentionOp
 
 
 def test_forward_shape(
@@ -23,7 +23,7 @@ def test_forward_shape(
 
 def test_attention_operator_raises_on_unknown_mode(random_qkv_tensors):
     with pytest.raises(ValueError):
-        op = LinearAttention(layer_idx=1, mode="not_a_mode")
+        op = LinearAttentionOp(layer_idx=1, mode="not_a_mode")
         q, k, v, beta = random_qkv_tensors
         op(q, k, v, beta)
 
@@ -34,7 +34,7 @@ def test_chunk_delta_rule_forward_computation(
     q, k, v, beta = random_qkv_tensors
     chunk_size = 8
     beta = beta[0]  # Only key or value gate is used in delta rule forward
-    out, _ = LinearAttention.chunk_delta_product_forward(q, k, v, beta, chunk_size)
+    out, _ = LinearAttentionOp.chunk_delta_product_forward(q, k, v, beta, chunk_size)
     assert out.shape == (batch_size, num_heads, seq_len, head_dim)
 
 
@@ -45,5 +45,5 @@ def test_chunk_delta_product_forward_computation(
     n = 2
     chunk_size = 8
     beta = beta[0]  # Only key or value gate is used in delta rule forward
-    out, _ = LinearAttention.chunk_delta_product_forward(q, k, v, beta, chunk_size, n)
+    out, _ = LinearAttentionOp.chunk_delta_product_forward(q, k, v, beta, chunk_size, n)
     assert out.shape == (batch_size, num_heads, seq_len, head_dim)

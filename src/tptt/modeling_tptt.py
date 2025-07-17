@@ -10,7 +10,7 @@ import os
 import re
 import shutil
 from functools import partial
-from typing import Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import torch
 import torch.nn.functional as F
@@ -58,6 +58,176 @@ class LCache:
         self.inputs_states.clear()
 
 
+class CausalAvgPool1d(nn.Module):
+    """Causal sliding window average (uniform, no shape loss along sequence)"""
+
+    def __init__(self, output_size, offsets=(0, 1, 2), mode="replicate"):
+        super().__init__()
+        self.offsets = offsets
+        self.mode = mode
+        self.pool = nn.AdaptiveAvgPool1d(output_size=output_size)
+
+    def forward(self, x):
+        """x: [B, S, F] → [B, S, F → output_size]"""
+        x_ = x.transpose(1, 2)  # [B, F, S]
+        idxs = torch.tensor(self.offsets, device=x.device)
+        ksize = idxs.max() - idxs.min() + 1
+        w = torch.zeros(ksize, device=x.device, dtype=x.dtype)
+        w[idxs - idxs.min()] = 1 / len(self.offsets)  # Always uniform weights
+        kernel = w.repeat(x_.shape[1], 1).reshape(x_.shape[1], 1, ksize)
+        pad_left = -idxs.min().item()
+        pad_right = (ksize - 1) - pad_left
+        x_pad = F.pad(x_, (pad_left, pad_right), mode=self.mode)
+        y = F.conv1d(x_pad, kernel, groups=x_.shape[1])
+        return self.pool(y.transpose(1, 2))  # [B, S, F → output_size]
+
+
+class LinearAttention(nn.Module):
+    """
+    Linear multi-head attention layer: [B, S, D] -> [B, S, D]
+    Projections + gating + efficient linear attention mechanism (TPTT compatible).
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        num_heads: int,
+        head_dim: Optional[int] = None,
+        num_key_value_heads: Optional[int] = None,
+        num_key_value_groups: Optional[int] = None,
+        bias: bool = True,
+        dropout: Optional[float] = None,
+        linear_precision: torch.dtype = torch.float32,
+        padding_side: str = "right",
+        shared_attn: bool = False,  # shared attention
+        layer_idx: int = 0,
+        operator_mode: str = "delta_rule",
+        linear_cache: Optional[LCache] = None,
+        max_chunk_size: int = 64,
+    ):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+        self.head_dim = head_dim or hidden_dim // num_heads
+        self.num_key_value_heads = num_key_value_heads or num_heads
+        self.num_key_value_groups = num_key_value_groups or (
+            num_heads // (num_key_value_heads or num_heads)
+        )
+        self.scaling = self.head_dim**-0.5
+        self.linear_precision = linear_precision
+        self.padding_side = padding_side
+
+        self.shared_attn = shared_attn
+
+        if not (shared_attn):
+            self.q_proj = nn.Linear(
+                hidden_dim, self.num_heads * self.head_dim, bias=bias
+            )
+            self.k_proj = nn.Linear(
+                hidden_dim, self.num_key_value_heads * self.head_dim, bias=bias
+            )
+            self.v_proj = nn.Linear(
+                hidden_dim, self.num_key_value_heads * self.head_dim, bias=bias
+            )
+            self.out_proj = nn.Linear(
+                self.num_heads * self.head_dim, hidden_dim, bias=bias
+            )
+
+        self.dropout = nn.Dropout(dropout) if dropout is not None else None
+
+        self.linear_operator = LinearAttentionOp(
+            layer_idx=layer_idx,
+            mode=operator_mode,
+            max_chunk_size=max_chunk_size,
+            linear_cache=linear_cache,
+            linear_precision=linear_precision,
+        )
+        # Causal average pooling for gating
+        self.pool_g = CausalAvgPool1d(
+            output_size=self.head_dim * self.num_key_value_heads
+        )
+
+    def forward(
+        self,
+        x: Union[List[torch.Tensor], torch.Tensor],
+        attn_mask: Optional[torch.Tensor] = None,
+        out_proj: Optional[nn.Module] = None,
+        **kwargs: Any,
+    ) -> torch.Tensor:
+        """
+        Forward pass for linear attention. Input shape: [B, S, D], output [B, S, D].
+        """
+
+        if not (self.shared_attn):
+            hidden_states = x[0] if isinstance(x, (list, tuple)) else x
+            # Projections
+            q = self.q_proj(hidden_states)
+            k = self.k_proj(hidden_states)
+            v = self.v_proj(hidden_states)
+            out_proj = self.out_proj
+        else:
+            # Shared attention, no projections
+            q, k, v = x[0], x[1], x[2]
+            out_proj = self.out_proj if out_proj is None else out_proj
+
+        # get dtype and device
+        final_dtype, final_device = q.dtype, q.device
+        # Masking if needed
+        if attn_mask is not None:
+            v = apply_linear_attention_mask(attn_mask, v, self.padding_side)
+
+        # Forget and Write Gating for linear attn (abusive term)
+        f_g, w_g = self.pool_g(k), self.pool_g(v)
+
+        # Reshape for multi-head
+        q = rearrange(q, "b n (h d) -> b h n d", h=self.num_heads)
+        k = rearrange(k, "b n (h d) -> b h n d", h=self.num_key_value_heads)
+        v = rearrange(v, "b n (h d) -> b h n d", h=self.num_key_value_heads)
+
+        f_g = rearrange(f_g, "b n (h m) -> b h n m", h=self.num_key_value_heads)
+        w_g = rearrange(w_g, "b n (h m) -> b h n m", h=self.num_key_value_heads)
+
+        # Repeat for GQA
+        k = k.repeat_interleave(self.num_key_value_groups, dim=1)
+        v = v.repeat_interleave(self.num_key_value_groups, dim=1)
+
+        f_g = f_g.repeat_interleave(self.num_key_value_groups, dim=1)
+        w_g = w_g.repeat_interleave(self.num_key_value_groups, dim=1)
+
+        ## DeltaNet-style: Silu activation and normalization
+        q = F.normalize(F.silu(q), p=2, dim=-1, eps=1e-6)
+        k = F.normalize(F.silu(k), p=2, dim=-1, eps=1e-6)
+
+        ## linear stability part
+        v = ensure_stability(v * self.scaling, min_val=-1e4, max_val=1e4)
+
+        # Apply sigmoid to forget and write gates
+        f_g = torch.clamp(torch.sigmoid(f_g), min=1e-6, max=1 - 1e-6)
+        w_g = torch.clamp(torch.sigmoid(w_g), min=1e-6, max=1 - 1e-6)
+
+        # Convert to linear_precision (float32) for numerical stability and get model dtype
+        q, k, v, f_g, w_g = (
+            x.to(self.linear_precision).contiguous() for x in (q, k, v, f_g, w_g)
+        )
+        g = (f_g, w_g)
+
+        # Linear Attention Core, output: [B, H, S, d]
+        out = self.linear_operator(q, k, v, g, **kwargs)
+
+        # Merge heads and project: [B, H, S, d] -> [B, S, H*d] -> Out proj
+        out = rearrange(out, "b h s d -> b s (h d)")
+        out = out / out.pow(2).mean(dim=-1, keepdim=True).add(1e-6).sqrt()  # RMS norm
+        # Ensure dtype and device consistency
+        out = out.to(dtype=final_dtype, device=final_device)
+        # Apply output projection
+        out = out_proj(out)  # [B, S, D]
+        out = ensure_stability(out, min_val=-1e4, max_val=1e4)
+        # Apply dropout if specified
+        if self.dropout is not None:
+            out = self.dropout(out)
+        return out
+
+
 class LiZAttention(nn.Module):
     """LiZA Linear Attention module, mixing linear and vanilla attention."""
 
@@ -101,14 +271,23 @@ class LiZAttention(nn.Module):
             self.num_key_value_groups,
         ) = self._get_attention_parameters(base_attn, base_config)
         self.scaling = self.head_dim**-0.5
-        self.operator = LinearAttention(
+
+        self.linear_attn = LinearAttention(
             layer_idx=layer_idx,
-            mode=operator_mode,
-            max_chunk_size=max_chunk_size,
-            linear_cache=linear_cache,
+            shared_attn=True,
+            operator_mode=operator_mode,
+            hidden_dim=base_config.hidden_size,
+            num_heads=self.num_heads,
+            head_dim=self.head_dim,
+            num_key_value_heads=self.num_key_value_heads,
+            num_key_value_groups=self.num_key_value_groups,
             linear_precision=linear_precision,
+            linear_cache=linear_cache,
+            max_chunk_size=max_chunk_size,
+            padding_side=padding_side,
         )
-        self.pool_g = nn.AdaptiveAvgPool1d(
+
+        self.pool_g = CausalAvgPool1d(
             output_size=self.head_dim * self.num_key_value_heads
         )
 
@@ -140,7 +319,7 @@ class LiZAttention(nn.Module):
             num_key_value_groups,
         )
 
-    def _apply_projections(self, hidden_states):
+    def _apply_shared_projections(self, hidden_states):
         base_attn = self.base_attn
         if hasattr(base_attn, "q_proj"):
             # LLama, OLMO and Mistral style
@@ -165,65 +344,6 @@ class LiZAttention(nn.Module):
         k = ensure_stability(k, min_val=-1e4, max_val=1e4)
         v = ensure_stability(v, min_val=-1e4, max_val=1e4)
         return q, k, v, out_proj
-
-    def _prepare_attn_input(self, q, k, v):
-        # Forget and Write Gating for linear attn (abusive term)
-        f_g, w_g = self.pool_g(k), self.pool_g(v)
-
-        # Reshape for multi-head
-        q = rearrange(q, "b n (h d) -> b h n d", h=self.num_heads)
-        k = rearrange(k, "b n (h d) -> b h n d", h=self.num_key_value_heads)
-        v = rearrange(v, "b n (h d) -> b h n d", h=self.num_key_value_heads)
-
-        f_g = rearrange(f_g, "b n (h m) -> b h n m", h=self.num_key_value_heads)
-        w_g = rearrange(w_g, "b n (h m) -> b h n m", h=self.num_key_value_heads)
-
-        # Repeat for GQA
-        k = k.repeat_interleave(self.num_key_value_groups, dim=1)
-        v = v.repeat_interleave(self.num_key_value_groups, dim=1)
-
-        f_g = f_g.repeat_interleave(self.num_key_value_groups, dim=1)
-        w_g = w_g.repeat_interleave(self.num_key_value_groups, dim=1)
-
-        ## DeltaNet-style: Silu activation and normalization
-        q = F.normalize(F.silu(q), p=2, dim=-1, eps=1e-6)
-        k = F.normalize(F.silu(k), p=2, dim=-1, eps=1e-6)
-
-        ## linear stability part
-        q = torch.clamp(q, min=1e-6, max=1 - 1e-6)
-        k = torch.clamp(k, min=1e-6, max=1 - 1e-6)
-        v = ensure_stability(v * self.scaling, min_val=-1e4, max_val=1e4)
-
-        # Apply sigmoid to forget and write gates
-        f_g = torch.clamp(torch.sigmoid(f_g), min=1e-6, max=1 - 1e-6)
-        w_g = torch.clamp(torch.sigmoid(w_g), min=1e-6, max=1 - 1e-6)
-
-        # Convert to linear_precision (float32) for numerical stability and get model dtype
-        q, k, v, f_g, w_g = (
-            x.to(self.linear_precision).contiguous() for x in (q, k, v, f_g, w_g)
-        )
-        g = (f_g, w_g)
-
-        return q, k, v, g
-
-    def _process_linear_attn(self, q, k, v, g, out_proj, tensor_dtype, kwargs):
-        """Process the linear attention part of the forward pass."""
-        # Linear attention
-        o_lin = self.operator(
-            q,
-            k,
-            v,
-            beta=g,
-            **kwargs,  # pass use_cache and other kwargs
-        )
-        o_lin = rearrange(o_lin, "b h n d -> b n (h d)").to(tensor_dtype)
-        # rms normalization and projection
-        o_lin = o_lin / o_lin.pow(2).mean(dim=-1, keepdim=True).add(1e-6).sqrt()
-        o_lin = out_proj(o_lin)
-
-        # Ensure stability
-        o_lin = ensure_stability(o_lin, min_val=-1e4, max_val=1e4)
-        return o_lin
 
     def _process_self_attn(self, hidden_states, attention_mask, kwargs):
         """Process the self-attention part (with truncation)."""
@@ -332,19 +452,13 @@ class LiZAttention(nn.Module):
 
         kwargs.pop("position_ids", None)  # obsolete
 
-        # Apply projections to hidden states
-        q, k, v, out_proj = self._apply_projections(hidden_states)
+        # Apply shared projections
+        q, k, v, out_proj = self._apply_shared_projections(hidden_states)
 
-        # Manage attention mask (with padding)
-        if attention_mask is not None:
-            # attention_mask -> [batch, seq], v: [batch, seq, ...]
-            v = apply_linear_attention_mask(attention_mask, v, self.padding_side)
-
-        # Prepare inputs tensor for linear attn
-        q, k, v, g = self._prepare_attn_input(q, k, v)
-
-        # Process linear attn from mask
-        o_lin = self._process_linear_attn(q, k, v, g, out_proj, tensor_dtype, kwargs)
+        # Apply linear attention to hidden states
+        o_lin = self.linear_attn(
+            x=[q, k, v], attn_mask=attention_mask, out_proj=out_proj, **kwargs
+        )
 
         # Process self attn with truncation
         o_base, attn_weights, present_key_value, expected_attn_mode = (
@@ -604,7 +718,7 @@ class TpttModel(PreTrainedModel):
 TpttModel.register_for_auto_class("AutoModelForCausalLM")
 
 
-class LinearAttention(nn.Module):
+class LinearAttentionOp(nn.Module):
     """Base class for linear attention operators."""
 
     _MODES = {
