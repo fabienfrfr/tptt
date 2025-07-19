@@ -236,7 +236,7 @@ class LinearAttention(nn.Module):
 
         # Merge heads and project: [B, H, S, d] -> [B, S, H*d] -> Out proj
         out = rearrange(out, "b h s d -> b s (h d)")
-        # Normalize output (RMS norm)
+        # Normalize output (RMS norm). Note: bidirectional compatibility
         out = out / out.pow(2).mean(dim=-1, keepdim=True).add(1e-6).sqrt()
         # Ensure dtype and device consistency
         out = out.to(dtype=final_dtype, device=final_device)
