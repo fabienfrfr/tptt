@@ -102,8 +102,12 @@ class LinearAttention(nn.Module):
         shared_attn: bool = False,  # shared attention
         layer_idx: int = 0,
         operator_mode: str = "delta_rule",
+        recurrent_config: Dict[str, Any] = dict(
+            order=1, gate_type="k", linear=True, trick="derivative"
+        ),
         linear_cache: Optional[LCache] = None,
         max_chunk_size: int = 64,
+        bidirectional: bool = False,  # not used if causal
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
@@ -120,28 +124,26 @@ class LinearAttention(nn.Module):
         self.shared_attn = shared_attn
 
         if not (shared_attn):
-            self.q_proj = nn.Linear(
-                hidden_dim, self.num_heads * self.head_dim, bias=bias
-            )
+            self.q_proj = nn.Linear(hidden_dim, num_heads * self.head_dim, bias=bias)
             self.k_proj = nn.Linear(
                 hidden_dim, self.num_key_value_heads * self.head_dim, bias=bias
             )
             self.v_proj = nn.Linear(
                 hidden_dim, self.num_key_value_heads * self.head_dim, bias=bias
             )
-            self.out_proj = nn.Linear(
-                self.num_heads * self.head_dim, hidden_dim, bias=bias
-            )
+            self.out_proj = nn.Linear(num_heads * self.head_dim, hidden_dim, bias=bias)
 
         self.dropout = nn.Dropout(dropout) if dropout is not None else None
 
         self.linear_operator = LinearAttentionOp(
             layer_idx=layer_idx,
-            mode=operator_mode,
+            operator_mode=operator_mode,
+            recurrent_config=recurrent_config,
             max_chunk_size=max_chunk_size,
             linear_cache=linear_cache,
             linear_precision=linear_precision,
         )
+        self.bidirectional = bidirectional
         # Causal average pooling for gating
         self.pool_g = CausalAvgPool1d(
             output_size=self.head_dim * self.num_key_value_heads
@@ -166,7 +168,7 @@ class LinearAttention(nn.Module):
             v = self.v_proj(hidden_states)
             out_proj = self.out_proj
         else:
-            # Shared attention, no projections
+            # Shared attention <=> no projections here
             q, k, v = x[0], x[1], x[2]
             out_proj = self.out_proj if out_proj is None else out_proj
 
@@ -212,11 +214,30 @@ class LinearAttention(nn.Module):
         g = (f_g, w_g)
 
         # Linear Attention Core, output: [B, H, S, d]
-        out = self.linear_operator(q, k, v, g, **kwargs)
+        if self.bidirectional:  # TODO: experimental, need mask management
+            # Forward direction
+            out_forward = self.linear_operator(q, k, v, g, **kwargs)
+            # Backward direction: flip the input sequence on the time dimension (dim=2)
+            kwargs_bwd = kwargs.copy()
+            kwargs_bwd["use_cache"] = False
+            out_backward = self.linear_operator(
+                torch.flip(q, dims=[2]),
+                torch.flip(k, dims=[2]),
+                torch.flip(v, dims=[2]),
+                tuple(torch.flip(t, dims=[2]) for t in g),
+                **kwargs_bwd,
+            )
+            # Flip the output back to restore proper order
+            out_backward = torch.flip(out_backward, dims=[2])
+            # Fusion: here, simple addition
+            out = out_forward + out_backward
+        else:
+            out = self.linear_operator(q, k, v, g, **kwargs)
 
         # Merge heads and project: [B, H, S, d] -> [B, S, H*d] -> Out proj
         out = rearrange(out, "b h s d -> b s (h d)")
-        out = out / out.pow(2).mean(dim=-1, keepdim=True).add(1e-6).sqrt()  # RMS norm
+        # Normalize output (RMS norm)
+        out = out / out.pow(2).mean(dim=-1, keepdim=True).add(1e-6).sqrt()
         # Ensure dtype and device consistency
         out = out.to(dtype=final_dtype, device=final_device)
         # Apply output projection
@@ -238,6 +259,9 @@ class LiZAttention(nn.Module):
         base_config,  # Backbone Config
         linear_cache: Optional[LCache] = None,
         operator_mode: str = "delta_rule",
+        recurrent_config: Dict[str, Any] = dict(
+            order=1, gate_type="k", linear=True, trick="derivative"
+        ),
         max_self_attn_length: Optional[int] = None,  # unnecessary
         base_scale_attn: bool = False,
         mag_weight: float = 0.5,
@@ -246,6 +270,7 @@ class LiZAttention(nn.Module):
         linear_precision: Union[str, torch.dtype] = "float32",
         padding_side: str = "right",  # for tokenizer
         disable_linear_attn: bool = False,
+        bidirectional: bool = False,  # if True, use bidirectional attention
     ):
         super().__init__()
         if isinstance(linear_precision, str):
@@ -276,6 +301,7 @@ class LiZAttention(nn.Module):
             layer_idx=layer_idx,
             shared_attn=True,
             operator_mode=operator_mode,
+            recurrent_config=recurrent_config,
             hidden_dim=base_config.hidden_size,
             num_heads=self.num_heads,
             head_dim=self.head_dim,
@@ -285,6 +311,7 @@ class LiZAttention(nn.Module):
             linear_cache=linear_cache,
             max_chunk_size=max_chunk_size,
             padding_side=padding_side,
+            bidirectional=bidirectional,
         )
 
         self.pool_g = CausalAvgPool1d(
@@ -428,7 +455,8 @@ class LiZAttention(nn.Module):
 
         if torch.allclose(softmax_weighted, output_attention):
             logger.info(
-                f"[LOG] layer : {self.layer_idx}, softmax_weighted and output_attention are close."
+                "[LOG] layer : %s, softmax_weighted and output_attention are close.",
+                self.layer_idx,
             )
         # Final output
         return ensure_stability(output_attention, min_val=-1e4, max_val=1e4)
@@ -487,6 +515,9 @@ def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-a
     target_modules: list,
     linear_cache: Optional[LCache] = None,
     operator_mode: str = "delta_rule",
+    recurrent_config: Dict[str, Any] = dict(
+        order=1, gate_type="k", linear=True, trick="derivative"
+    ),
     base_scale_attn: bool = False,
     mag_weight: float = 0.5,
     cross_gate: bool = False,
@@ -494,6 +525,7 @@ def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-a
     linear_precision: torch.dtype = torch.float32,
     max_self_attn_length: Optional[int] = None,  # unnecessary
     padding_side: str = "right",  # for tokenizer
+    bidirectional: bool = False,  # if True, use bidirectional attention
 ):
     """Replace target modules in a model with LiZAttention."""
     linear_cache = linear_cache or LCache()
@@ -514,6 +546,7 @@ def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-a
                     base_config=base_config,
                     linear_cache=linear_cache,
                     operator_mode=operator_mode,
+                    recurrent_config=recurrent_config,
                     max_self_attn_length=max_self_attn_length,
                     base_scale_attn=base_scale_attn,
                     mag_weight=mag_weight,
@@ -521,6 +554,7 @@ def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-a
                     max_chunk_size=max_chunk_size,
                     linear_precision=linear_precision,
                     padding_side=padding_side,
+                    bidirectional=bidirectional,
                 ),
             )
     return model, linear_cache
@@ -641,6 +675,7 @@ class TpttModel(PreTrainedModel):
             target_modules=target_modules,
             linear_cache=linear_cache,
             operator_mode=config.operator_mode,
+            recurrent_config=config.recurrent_config,
             max_self_attn_length=config.max_self_attn_length,
             base_scale_attn=config.base_scale_attn,
             mag_weight=config.mag_weight,
@@ -648,6 +683,7 @@ class TpttModel(PreTrainedModel):
             max_chunk_size=config.max_chunk_size,
             linear_precision=config.linear_precision,
             padding_side=config.padding_side,
+            bidirectional=config.bidirectional,
         )
 
     def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
@@ -721,37 +757,22 @@ TpttModel.register_for_auto_class("AutoModelForCausalLM")
 class LinearAttentionOp(nn.Module):
     """Base class for linear attention operators."""
 
-    _MODES = {
-        "delta_rule": dict(order=1, gate_type="k", linear=True, trick="derivative"),
-        "delta_rule_v": dict(order=1, gate_type="v", linear=True, trick="derivative"),
-        "delta_rule_kv": dict(order=1, gate_type="kv", linear=True, trick="derivative"),
-        "delta_rule_kv_gelu": dict(
-            order=1, gate_type="kv", linear=False, trick="derivative"
-        ),
-        "delta_product": dict(order=2, gate_type="k", linear=True, trick="derivative"),
-        "delta_product_r": dict(order=2, gate_type="k", linear=True, trick="rotative"),
-        "delta_product_c": dict(order=2, gate_type="k", linear=True, trick="combined"),
-    }
-
     def __init__(
         self,
         layer_idx,
-        mode="delta_rule",
+        operator_mode="delta_rule",
+        recurrent_config=dict(order=1, gate_type="k", linear=True, trick="derivative"),
         max_chunk_size=64,
         linear_cache=None,
         linear_precision=torch.float32,
     ):
         super().__init__()
         self.layer_idx = layer_idx
-        self.mode = mode
-
-        if mode not in self._MODES:
-            raise ValueError(f"Unsupported linear attention mode: {mode}")
-        config = self._MODES[mode]
-        self.order = config["order"]
-        self.gate_type = config["gate_type"]
-        self.linear = config["linear"]
-        self.trick = config["trick"]
+        self.operator_mode = operator_mode
+        self.order = recurrent_config["order"]
+        self.gate_type = recurrent_config["gate_type"]
+        self.linear = recurrent_config["linear"]
+        self.trick = recurrent_config["trick"]
 
         self.max_chunk_size = max_chunk_size
         self.linear_cache = linear_cache or LCache()

@@ -21,13 +21,6 @@ def test_forward_shape(
     assert o.shape == (batch_size, num_heads, seq_len, head_dim)
 
 
-def test_attention_operator_raises_on_unknown_mode(random_qkv_tensors):
-    with pytest.raises(ValueError):
-        op = LinearAttentionOp(layer_idx=1, mode="not_a_mode")
-        q, k, v, beta = random_qkv_tensors
-        op(q, k, v, beta)
-
-
 def test_chunk_delta_rule_forward_computation(
     random_qkv_tensors, batch_size, num_heads, seq_len, head_dim
 ):

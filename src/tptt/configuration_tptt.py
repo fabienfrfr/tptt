@@ -34,6 +34,18 @@ class TpttConfig(PretrainedConfig):
     }
     architectures = ["TpttModel"]
 
+    RECURRENT_MODES = {
+        "delta_rule": dict(order=1, gate_type="k", linear=True, trick="derivative"),
+        "delta_rule_v": dict(order=1, gate_type="v", linear=True, trick="derivative"),
+        "delta_rule_kv": dict(order=1, gate_type="kv", linear=True, trick="derivative"),
+        "delta_rule_gelu": dict(
+            order=1, gate_type="k", linear=False, trick="derivative"
+        ),
+        "delta_product": dict(order=2, gate_type="k", linear=True, trick="derivative"),
+        "delta_product_r": dict(order=2, gate_type="k", linear=True, trick="rotative"),
+        "delta_product_c": dict(order=2, gate_type="k", linear=True, trick="combined"),
+    }  # Tested modes, see parse_mode_name if you want to add more
+
     def __init__(
         self,
         base_model_config: Optional[Union[dict, PretrainedConfig]] = None,
@@ -52,6 +64,7 @@ class TpttConfig(PretrainedConfig):
         linear_precision: Union[str, torch.dtype] = "float32",
         lora_config: Optional[dict] = None,  # only serialized accepted
         padding_side: Optional[str] = None,  # for tokenizer, default "right"
+        bidirectional: bool = False,  # if True, use bidirectional attention
         **kwargs,
     ):
         # If base_model_config is provided, load it and merge with this config
@@ -97,16 +110,26 @@ class TpttConfig(PretrainedConfig):
                 self.lora_config["peft_type"] = self.lora_config["peft_type"].value
             self.lora_config = convert_sets_to_lists(self.lora_config)
 
-        if padding_side is None:
-            self.padding_side = "right"
-            print("Warning: padding_side is None, defaulting to 'right'.")
-        else:
-            self.padding_side = padding_side
+        self.padding_side = padding_side
+        self.bidirectional = bidirectional
+        if self.bidirectional:
+            print("Bidirectional is enabled, need to be uncausal and unpadded.")
+
         super().__init__(**kwargs)  # flush unconsistend pretrained parameters (?)
         # Copy class attributes to instance for serialization (save dict)
         self.model_type = self.__class__.model_type
         self.auto_map = self.__class__.auto_map
         self.architectures = self.__class__.architectures
+        # Padding side configuration if not set
+        if self.padding_side is None:
+            self.padding_side = "right"
+            print("Warning: padding_side is None, defaulting to 'right'.")
+        # set recurrent configuration from operator mode
+        if operator_mode not in self.__class__.RECURRENT_MODES:
+            self.recurrent_config = parse_mode_name(operator_mode)
+        else:
+            self.recurrent_config = self.__class__.RECURRENT_MODES[operator_mode]
+        print(f"Using recurrent mode: {get_mode_name(**self.recurrent_config)}")
 
 
 TpttConfig.register_for_auto_class()
@@ -114,6 +137,64 @@ TpttConfig.register_for_auto_class()
 
 def extract_template_variables(template):
     return set(re.findall(r"\{([^{}]+)\}", template))
+
+
+def parse_mode_name(name):
+    if name.startswith("delta_product"):
+        parts = name.split("_")
+        # Prefix is always two words: 'delta' and 'product'
+        base_len = 2
+        order = 2
+        gate_type = "k"
+        linear = True
+        trick = "derivative"
+
+        idx = base_len
+        # Check for order (immediately after the prefix)
+        if len(parts) > idx and parts[idx].isdigit():
+            order = int(parts[idx])
+            idx += 1
+
+        remaining = parts[idx:]
+        # Trick (r/c) is always at the far right if present
+        if remaining and remaining[-1] in ("r", "c"):
+            trick = {"r": "rotative", "c": "combined"}[remaining[-1]]
+            remaining = remaining[:-1]
+        # 'gelu' comes just before the trick if present
+        if remaining and remaining[-1] == "gelu":
+            linear = False
+            remaining = remaining[:-1]
+        # If anything remains, it's the gate_type
+        if remaining:
+            gate_type = "_".join(remaining)
+        return dict(order=order, gate_type=gate_type, linear=linear, trick=trick)
+
+    # delta_rule[_gate][_gelu]
+    m = re.match(r"^delta_rule(?:_(kv|v|k))?(_gelu)?$", name)
+    if m:
+        return dict(
+            order=1,
+            gate_type=m.group(1) if m.group(1) else "k",
+            linear=not bool(m.group(2)),
+            trick="derivative",
+        )
+    raise ValueError(f"Unknown mode: {name}")
+
+
+def get_mode_name(order=1, gate_type="k", linear=True, trick="derivative"):
+    base = (
+        "delta_rule"
+        if order == 1
+        else ("delta_product" if order == 2 else f"delta_product_{order}")
+    )
+    parts = []
+    if gate_type != "k":
+        parts.append(gate_type)
+    if not linear:
+        parts.append("gelu")
+    if order >= 2 and trick != "derivative":
+        parts.append({"rotative": "r", "combined": "c"}.get(trick, trick))
+    return base + (("_" + "_".join(parts)) if parts else "")
 
 
 def generate_model_card(path: str, config, **kwargs):

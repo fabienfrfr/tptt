@@ -11,3 +11,13 @@ def test_linear_attention_forward(linear_attention):
     y = linear_attention(x)
     assert y.shape == (B, S, D)
     print("Test passed: output shape is", y.shape)
+
+
+def test_bidirectional_linear_attention_forward(bidirectional_linear_attention):
+    B, S, D = 2, 16, 32  # batch, seq_len, hidden_dim
+
+    x = torch.randn(B, S, D)
+
+    y = bidirectional_linear_attention(x)
+    assert y.shape == (B, S, D)
+    print("Test passed: output shape is", y.shape)

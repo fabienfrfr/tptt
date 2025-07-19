@@ -9,8 +9,13 @@ from torch import nn
 from transformers import AutoTokenizer, PretrainedConfig, PreTrainedModel
 
 from src.tptt.configuration_tptt import TpttConfig
-from src.tptt.modeling_tptt import (LCache, LinearAttention, LinearAttentionOp,
-                                    LiZAttention, TpttModel)
+from src.tptt.modeling_tptt import (
+    LCache,
+    LinearAttention,
+    LinearAttentionOp,
+    LiZAttention,
+    TpttModel,
+)
 
 
 @pytest.fixture
@@ -112,7 +117,7 @@ def attention_mask(random_hidden_tensor, seq_len, batch_size):
 @pytest.fixture
 def operator():
     """Fixture for AttentionOperator instance."""
-    return LinearAttentionOp(layer_idx=1, mode="delta_rule")
+    return LinearAttentionOp(layer_idx=1, operator_mode="delta_rule")
 
 
 @pytest.fixture
@@ -320,5 +325,20 @@ def linear_attention():
         num_key_value_heads=num_heads,
         dropout=0.0,
         padding_side="right",
+    )
+    return attn
+
+
+@pytest.fixture
+def bidirectional_linear_attention():
+    hidden_dim = 32
+    num_heads = 4
+    attn = LinearAttention(
+        hidden_dim=hidden_dim,
+        num_heads=num_heads,
+        num_key_value_heads=num_heads,
+        dropout=0.0,
+        padding_side="right",
+        bidirectional=True,
     )
     return attn
