@@ -9,5 +9,5 @@ This repository provides tools and guides for training and evaluating advanced l
 - [TPTT_LiZA_Evaluation](liza-evaluate.md):  
   Guide for evaluating language models with LightEval and Hugging Face Transformers.
 
-- [TPTT_LiZA_FromScratch](lisa-from-scratch.md):
+- [TPTT_LiZA_FromScratch](liza-from-scratch.md):
   Integrating the `LinearAttention` module into Pytorch deep learning projects.

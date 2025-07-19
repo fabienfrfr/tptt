@@ -49,7 +49,7 @@ pip install tptt
 - [TPTT_LiZA_Evaluation](./docs/liza-evaluate.md):  
   Guide for evaluating language models with LightEval and Hugging Face Transformers.
 
-- [TPTT_LiZA_FromScratch](./docs/lisa-from-scratch.md):
+- [TPTT_LiZA_FromScratch](./docs/liza-from-scratch.md):
   Integrating the `LinearAttention` module into Pytorch deep learning projects.
 
 Basic usage :
