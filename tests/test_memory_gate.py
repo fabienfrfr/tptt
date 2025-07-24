@@ -1,4 +1,4 @@
-# pylint: disable=redefined-outer-name
+# pylint: disable=redefined-outer-name, too-many-arguments, too-many-positional-arguments
 """Tests for LiZAttention projection sharing."""
 import torch
 

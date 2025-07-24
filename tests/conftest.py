@@ -1,5 +1,6 @@
-# pylint: disable=redefined-outer-name
-"""Tests for the AttentionOperator module."""
+# pylint: disable=redefined-outer-name, too-many-arguments, too-many-positional-arguments
+
+"""Conftest for the tppt module."""
 
 from unittest.mock import MagicMock
 
@@ -9,13 +10,8 @@ from torch import nn
 from transformers import AutoTokenizer, PretrainedConfig, PreTrainedModel
 
 from src.tptt.configuration_tptt import TpttConfig
-from src.tptt.modeling_tptt import (
-    LCache,
-    LinearAttention,
-    LinearAttentionOp,
-    LiZAttention,
-    TpttModel,
-)
+from src.tptt.modeling_tptt import (LCache, LinearAttention, LinearAttentionOp,
+                                    LiZAttention, TpttModel)
 
 
 @pytest.fixture
@@ -136,8 +132,8 @@ def dummy_base_attn(tensor_dim, num_heads, head_dim):
             self.v_proj = nn.Linear(tensor_dim, num_heads * head_dim)
             self.o_proj = nn.Linear(num_heads * self.head_dim, tensor_dim)
 
-        def forward(self, x, **kwargs):
-            # Simulate output of a standard attention module
+        def forward(self, x, **kwargs):  # pylint: disable=unused-argument
+            """Simulate output of a standard attention module"""
             # Output: (batch, seq_len, tensor_dim), attn_weights=None
             return torch.randn(x.shape[0], x.shape[1], x.shape[2]), None
 
@@ -149,6 +145,8 @@ def dummy_fused_qkv_attn(tensor_dim, num_q_heads, num_kv_heads, head_dim):
     """Fixture for a dummy attention module with fused QKV projection (OpenELM/Falcon style)."""
 
     class DummyFusedQKVAttention(nn.Module):
+        """Minimal dummy qkv attention"""
+
         def __init__(self):
             super().__init__()
             self.num_q_heads = num_q_heads
@@ -161,8 +159,8 @@ def dummy_fused_qkv_attn(tensor_dim, num_q_heads, num_kv_heads, head_dim):
             )
             self.out_proj = nn.Linear(num_q_heads * head_dim, tensor_dim)
 
-        def forward(self, x, **kwargs):
-            # Simulate output of a standard attention module
+        def forward(self, x, **kwargs):  # pylint: disable=unused-argument
+            """Simulate output of a standard attention module"""
             return torch.randn(x.shape[0], x.shape[1], x.shape[2]), None
 
     return DummyFusedQKVAttention()
@@ -179,7 +177,7 @@ def dummy_config(
 ):
     """Fixture for a dummy configuration object."""
 
-    class DummyConfig:
+    class DummyConfig:  # pylint: disable=too-few-public-methods
         """Minimal dummy config for LiZAttention."""
 
         def __init__(
@@ -224,7 +222,7 @@ def liza_qkv_attention(dummy_fused_qkv_attn, dummy_config):
 def dummy_decoder(dummy_base_attn):
     """Fixture for a dummy decoder module."""
 
-    class DummyDecoder(nn.Module):
+    class DummyDecoder(nn.Module):  # pylint: disable=abstract-method
         """Dummy model containing a self-attention module."""
 
         def __init__(self):
@@ -236,16 +234,19 @@ def dummy_decoder(dummy_base_attn):
 
 @pytest.fixture
 def cache():
+    """Basic cache pre-imported"""
     return LCache()
 
 
 @pytest.fixture
 def dummy_tptt_config():
+    """Basic config"""
     return TpttConfig(model_name="test-model")
 
 
 @pytest.fixture
 def dummy_tokenizer():
+    """Basic tokenizer"""
     tokenizer = MagicMock()
     tokenizer.return_tensors = "pt"
     tokenizer.decode.return_value = "Generated text"
@@ -258,6 +259,7 @@ def dummy_tokenizer():
 
 @pytest.fixture
 def dummy_model():
+    """Dummy Self Attn model"""
     model = MagicMock()
     model.named_modules.return_value = [("layer.self_attn", MagicMock())]
     model.generate.return_value = [[0, 1, 2]]
@@ -267,7 +269,7 @@ def dummy_model():
 
 @pytest.fixture
 def dummy_tptt_model(dummy_tptt_config, dummy_model, dummy_tokenizer, cache, mocker):
-    # Patch les dépendances internes du constructeur TpttModel
+    """Patch les dépendances internes du constructeur TpttModel"""
     mocker.patch(
         "src.tptt.modeling_tptt.AutoModelForCausalLM.from_pretrained",
         return_value=dummy_model,
@@ -283,12 +285,16 @@ def dummy_tptt_model(dummy_tptt_config, dummy_model, dummy_tokenizer, cache, moc
 
 
 class DummyConfig(PretrainedConfig):
+    """Basic mock tptt config"""
+
     def __init__(self):
         super().__init__()
         self.vocab_size = 50257
 
 
 class DummyModel(PreTrainedModel):
+    """Basick import mock model"""
+
     config_class = DummyConfig
 
     def __init__(self, config=None):
@@ -299,17 +305,21 @@ class DummyModel(PreTrainedModel):
 
     @property
     def device(self):
+        """get device"""
         return self._device
 
-    def forward(self, *args, **kwargs):
+    def forward(self, *args, **kwargs):  # pylint: disable=unused-argument
+        """minimal forward"""
         return torch.ones((1, 1))
 
-    def generate(self, **kwargs):
+    def generate(self, **kwargs):  # pylint: disable=unused-argument
+        """minimal generation"""
         return torch.tensor([[1, 2, 3, 4]])
 
 
 @pytest.fixture
 def dummy_pipeline_components():
+    """minimal pipeline"""
     model = DummyModel()
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
     return model, tokenizer
@@ -317,6 +327,7 @@ def dummy_pipeline_components():
 
 @pytest.fixture
 def linear_attention():
+    """minimal linear attention"""
     hidden_dim = 32
     num_heads = 4
     attn = LinearAttention(
@@ -331,6 +342,7 @@ def linear_attention():
 
 @pytest.fixture
 def bidirectional_linear_attention():
+    """minimal bidirectional attention"""
     hidden_dim = 32
     num_heads = 4
     attn = LinearAttention(
@@ -342,3 +354,12 @@ def bidirectional_linear_attention():
         bidirectional=True,
     )
     return attn
+
+
+@pytest.fixture(autouse=True)
+def patch_ensure_stability(monkeypatch):
+    """Patch ensure_stability globally to be identity for simplicity."""
+    monkeypatch.setattr(
+        "src.tptt.modeling_tptt.ensure_stability",
+        lambda x, **kwargs: x,
+    )

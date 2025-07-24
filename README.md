@@ -49,12 +49,16 @@ pip install tptt
 - [TPTT_LiZA_Evaluation](./docs/liza-evaluate.md):  
   Guide for evaluating language models with LightEval and Hugging Face Transformers.
 
+- [TPTT_LiZA_FromScratch](./docs/liza-from-scratch.md):  
+  Integrating the `LinearAttention` module into Pytorch deep learning projects.
+
 Basic usage :
 
 ```python
 
 from transformer import AutoTokenizer, AutoModelForCausalLM
 import tptt
+from tptt import get_tptt_model, load_tptt_safetensor
 
 ##### Transforming into Titans (Tptt)
 base_model_name="meta-llama/Llama-3.2-1B"
@@ -68,15 +72,23 @@ model = tptt.TpttModel(config)
 repo_id = "ffurfaro/Titans-Llama-3.2-1B"
 model = AutoModelForCausalLM.from_pretrained(repo_id, trust_remote_code=True)
 
-```
+##### More custom for other Model (BERT, ViT, etc.)
+model, linear_cache = get_tptt_model(model, config) # you can activate Bidirectional
+model = load_tptt_safetensor(repo_or_path, model) # from saved LoRA only
 
+##### Using LinearAttention from scratch
+layers = nn.ModuleList([
+    tptt.LinearAttention(hidden_dim=64, num_heads=4,)
+    for _ in range(num_layers)])
+
+```
 
 ---
 
 ## Development
 
 - Code is organized into modular components under the `src/tptt` directory.
-- Use `pytest` for testing and `sphinx` for documentation. (in progress 🔥)
+- Use `pytest` for testing and `sphinx` for documentation. 🔥
 - Contributions and feature requests are welcome!
 
 ---

@@ -1,10 +1,12 @@
+# pylint: disable=too-many-arguments, too-many-positional-arguments
+
 """
 Author : Fabien FURFARO
 """
 
-from typing import Optional
+from typing import Optional, Union
 
-from transformers import TrainerCallback
+from transformers import PreTrainedModel, TrainerCallback
 
 from .modeling_tptt import LiZAttention
 
@@ -21,11 +23,11 @@ class LiZACallback(TrainerCallback):
 
     def __init__(
         self,
-        model,
+        model: PreTrainedModel,
         mode: str = "gradual",
         initial_weight: float = 0.0,
         final_weight: float = 0.5,
-        transition_step: int = 100,
+        transition_step: Union[int, tuple, list] = 100,
         weight_list: Optional[list] = None,
         switch_period: int = 1,  # period for switching
     ):
@@ -41,9 +43,7 @@ class LiZACallback(TrainerCallback):
         self.final_weight = float(final_weight)
 
         # Ensure transition_step is an int scalar, not tuple/list
-        if isinstance(transition_step, (tuple, list)):
-            transition_step = transition_step[0]
-        self.transition_step = int(transition_step)
+        self.transition_step = ensure_int(transition_step)
 
         # For cyclic mode: ensure all weights are float scalars
         if weight_list is not None:
@@ -62,19 +62,8 @@ class LiZACallback(TrainerCallback):
         transition_step = self.transition_step
 
         # Ensure current_step and transition_step are plain ints
-        if isinstance(current_step, (tuple, list)):
-            current_step = current_step[0]
-        if hasattr(current_step, "item"):
-            current_step = int(current_step.item())
-        else:
-            current_step = int(current_step)
-
-        if isinstance(transition_step, (tuple, list)):
-            transition_step = transition_step[0]
-        if hasattr(transition_step, "item"):
-            transition_step = int(transition_step.item())
-        else:
-            transition_step = int(transition_step)
+        current_step = ensure_int(current_step)
+        transition_step = ensure_int(transition_step)
 
         # Select mag_weight or enable/disable linear attention according to mode
         if self.mode == "gradual":
@@ -108,7 +97,7 @@ class LiZACallback(TrainerCallback):
     def on_log(self, args, state, control, logs=None, **kwargs):
         mag_weight = None
         disable_linear_attn = None
-        # Log the current mag_weight and disable_linear_attn from the first LiZAttention module found
+        # Log the current mag_weight and disable_linear_attn
         for _, module in self.model.named_modules():
             if isinstance(module, LiZAttention):
                 mag_weight = getattr(module, "mag_weight", None)
@@ -118,6 +107,15 @@ class LiZACallback(TrainerCallback):
             logs["mag_weight"] = float(mag_weight)
         if disable_linear_attn is not None and logs is not None:
             logs["disable_linear_attn"] = not bool(disable_linear_attn)
+
+
+def ensure_int(value: Union[int, tuple, list]) -> int:
+    """Ensure the value is a plain integer."""
+    if isinstance(value, (tuple, list)):
+        value = int(value[0])
+    if hasattr(value, "item"):
+        value = int(value.item())
+    return value
 
 
 class SaveBestModelCallback(TrainerCallback):

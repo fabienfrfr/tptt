@@ -23,7 +23,7 @@ Begins by installing essential dependencies for quantization and TPTT model supp
 
 ```python
 
-!pip install -q bitsandbytes accelerate
+!pip install -q bitsandbytes accelerate # if quantization
 # !pip install -q git+https://github.com/fabienfrfr/tptt@dev
 !pip install -q tptt
 
@@ -158,7 +158,7 @@ tokenized_dataset = raw_dataset.map(preprocess_fn, batched=True, remove_columns=
 
 
 ```python
-# LiZA MaG callback
+# LiZA callback
 initial_weight=0.01,
 final_weight=0.5,
 transition_step=100,
@@ -203,7 +203,7 @@ model=model,
 args=training_args,
 train_dataset=tokenized_dataset,
 data_collator=data_collator,
-callbacks=[liza_callback], # optional and need comparizon (bug in Transformer 4.51.3)
+callbacks=[liza_callback], # optional and need comparizon
 )
 
 ```
@@ -257,6 +257,8 @@ pipe = tptt.TpttPipeline(model=model_tptt, tokenizer=tokenizer, device=device)
 result = pipe("Bonjour, I'm Fabien Furfaro,", max_new_tokens=100)
 
 ```
+
+Also, you can use your own pipeline, or only generate.
 
 ## Conclusion
 

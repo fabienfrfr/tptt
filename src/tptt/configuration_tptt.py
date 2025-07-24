@@ -1,3 +1,4 @@
+# pylint: disable=too-many-arguments, too-many-positional-arguments, too-many-instance-attributes, too-many-locals
 """
 Author : Fabien FURFARO
 """
@@ -11,14 +12,14 @@ from transformers import AutoConfig, PretrainedConfig
 
 
 def convert_sets_to_lists(obj):
+    """Convert sets to list for LoRA serialized config"""
     if isinstance(obj, set):
         return list(obj)
-    elif isinstance(obj, dict):
+    if isinstance(obj, dict):
         return {k: convert_sets_to_lists(v) for k, v in obj.items()}
-    elif isinstance(obj, (list, tuple)):
+    if isinstance(obj, (list, tuple)):
         return [convert_sets_to_lists(x) for x in obj]
-    else:
-        return obj
+    return obj
 
 
 class TpttConfig(PretrainedConfig):
@@ -35,15 +36,48 @@ class TpttConfig(PretrainedConfig):
     architectures = ["TpttModel"]
 
     RECURRENT_MODES = {
-        "delta_rule": dict(order=1, gate_type="k", linear=True, trick="derivative"),
-        "delta_rule_v": dict(order=1, gate_type="v", linear=True, trick="derivative"),
-        "delta_rule_kv": dict(order=1, gate_type="kv", linear=True, trick="derivative"),
-        "delta_rule_gelu": dict(
-            order=1, gate_type="k", linear=False, trick="derivative"
-        ),
-        "delta_product": dict(order=2, gate_type="k", linear=True, trick="derivative"),
-        "delta_product_r": dict(order=2, gate_type="k", linear=True, trick="rotative"),
-        "delta_product_c": dict(order=2, gate_type="k", linear=True, trick="combined"),
+        "delta_rule": {
+            "order": 1,
+            "gate_type": "k",
+            "linear": True,
+            "trick": "derivative",
+        },
+        "delta_rule_v": {
+            "order": 1,
+            "gate_type": "v",
+            "linear": True,
+            "trick": "derivative",
+        },
+        "delta_rule_kv": {
+            "order": 1,
+            "gate_type": "kv",
+            "linear": True,
+            "trick": "derivative",
+        },
+        "delta_rule_gelu": {
+            "order": 1,
+            "gate_type": "k",
+            "linear": False,
+            "trick": "derivative",
+        },
+        "delta_product": {
+            "order": 2,
+            "gate_type": "k",
+            "linear": True,
+            "trick": "derivative",
+        },
+        "delta_product_r": {
+            "order": 2,
+            "gate_type": "k",
+            "linear": True,
+            "trick": "rotative",
+        },
+        "delta_product_c": {
+            "order": 2,
+            "gate_type": "k",
+            "linear": True,
+            "trick": "combined",
+        },
     }  # Tested modes, see parse_mode_name if you want to add more
 
     def __init__(
@@ -81,11 +115,14 @@ class TpttConfig(PretrainedConfig):
             setattr(self, k, v)
 
         self.base_model_name = base_model_name
-        self._name_or_path = (
-            name_or_path
-            if name_or_path is not None
-            else "Titans-" + base_model_name.split("/", 1)[1]
-        )
+
+        if name_or_path is not None:
+            self._name_or_path = name_or_path
+        else:
+            if "/" in base_model_name:
+                self._name_or_path = "Titans-" + base_model_name.split("/", 1)[1]
+            else:
+                self._name_or_path = "Titans-" + base_model_name
 
         self.target_modules_names = target_modules_names or [
             "attn",
@@ -135,11 +172,13 @@ class TpttConfig(PretrainedConfig):
 TpttConfig.register_for_auto_class()
 
 
-def extract_template_variables(template):
+def extract_template_variables(template: str) -> set:
+    """Basic extract variable from md template"""
     return set(re.findall(r"\{([^{}]+)\}", template))
 
 
-def parse_mode_name(name):
+def parse_mode_name(name: str) -> dict:
+    """Parse mode to recurrent config"""
     if name.startswith("delta_product"):
         parts = name.split("_")
         # Prefix is always two words: 'delta' and 'product'
@@ -167,21 +206,29 @@ def parse_mode_name(name):
         # If anything remains, it's the gate_type
         if remaining:
             gate_type = "_".join(remaining)
-        return dict(order=order, gate_type=gate_type, linear=linear, trick=trick)
+        return {
+            "order": order,
+            "gate_type": gate_type,
+            "linear": linear,
+            "trick": trick,
+        }
 
     # delta_rule[_gate][_gelu]
     m = re.match(r"^delta_rule(?:_(kv|v|k))?(_gelu)?$", name)
     if m:
-        return dict(
-            order=1,
-            gate_type=m.group(1) if m.group(1) else "k",
-            linear=not bool(m.group(2)),
-            trick="derivative",
-        )
+        return {
+            "order": 1,
+            "gate_type": m.group(1) if m.group(1) else "k",
+            "linear": not bool(m.group(2)),
+            "trick": "derivative",
+        }
     raise ValueError(f"Unknown mode: {name}")
 
 
-def get_mode_name(order=1, gate_type="k", linear=True, trick="derivative"):
+def get_mode_name(
+    order: int = 1, gate_type: str = "k", linear: bool = True, trick: str = "derivative"
+) -> str:
+    """Get recurrent mode name from parameter"""
     base = (
         "delta_rule"
         if order == 1
@@ -197,14 +244,14 @@ def get_mode_name(order=1, gate_type="k", linear=True, trick="derivative"):
     return base + (("_" + "_".join(parts)) if parts else "")
 
 
-def generate_model_card(path: str, config, **kwargs):
+def generate_model_card(path: str, config: PretrainedConfig, **kwargs) -> None:
     """Generate model card from template and training metadata."""
     template_path = os.path.join(os.path.dirname(__file__), "model_card_template.md")
     with open(template_path, "r", encoding="utf-8") as f:
         template = f.read()
 
     # Flatten config
-    def flatten_config(config):
+    def flatten_config(config: PretrainedConfig) -> dict:
         result = {}
         if hasattr(config, "__dict__"):
             config = config.__dict__

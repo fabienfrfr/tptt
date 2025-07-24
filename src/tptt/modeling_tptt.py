@@ -1,3 +1,5 @@
+# pylint: disable=too-many-lines, too-many-arguments, too-many-positional-arguments, too-many-instance-attributes, too-many-locals
+
 """
 This module implements the TPTT model with linear attention (LiZA) and LoRA support.
 Author : Fabien FURFARO
@@ -10,13 +12,13 @@ import os
 import re
 import shutil
 from functools import partial
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
 from einops import rearrange
 from huggingface_hub import hf_hub_download, list_repo_files
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, PeftModel, get_peft_model
 from safetensors import safe_open
 from torch import nn
 from torch.utils.checkpoint import checkpoint
@@ -47,7 +49,7 @@ class LCache:
             k: v.detach() if isinstance(v, torch.Tensor) else v
             for k, v in kwargs.items()
         }
-        """Update or create the state for the specified layer"""
+        # Update or create the state for the specified layer
         if layer_idx in self.inputs_states:
             self.inputs_states[layer_idx].update(detached_kwargs)
         else:
@@ -61,13 +63,15 @@ class LCache:
 class CausalAvgPool1d(nn.Module):
     """Causal sliding window average (uniform, no shape loss along sequence)"""
 
-    def __init__(self, output_size, offsets=(0, 1, 2), mode="replicate"):
+    def __init__(
+        self, output_size: int, offsets: tuple[int] = (0, 1, 2), mode: str = "replicate"
+    ):
         super().__init__()
         self.offsets = offsets
         self.mode = mode
         self.pool = nn.AdaptiveAvgPool1d(output_size=output_size)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """x: [B, S, F] → [B, S, F → output_size]"""
         x_ = x.transpose(1, 2)  # [B, F, S]
         idxs = torch.tensor(self.offsets, device=x.device)
@@ -78,7 +82,7 @@ class CausalAvgPool1d(nn.Module):
         pad_left = -idxs.min().item()
         pad_right = (ksize - 1) - pad_left
         x_pad = F.pad(x_, (pad_left, pad_right), mode=self.mode)
-        y = F.conv1d(x_pad, kernel, groups=x_.shape[1])
+        y = F.conv1d(x_pad, kernel, groups=x_.shape[1])  # pylint: disable=not-callable
         return self.pool(y.transpose(1, 2))  # [B, S, F → output_size]
 
 
@@ -102,14 +106,20 @@ class LinearAttention(nn.Module):
         shared_attn: bool = False,  # shared attention
         layer_idx: int = 0,
         operator_mode: str = "delta_rule",
-        recurrent_config: Dict[str, Any] = dict(
-            order=1, gate_type="k", linear=True, trick="derivative"
-        ),
+        recurrent_config: Optional[Dict[str, Any]] = None,
         linear_cache: Optional[LCache] = None,
         max_chunk_size: int = 64,
         bidirectional: bool = False,  # not used if causal
     ):
         super().__init__()
+        if recurrent_config is None:
+            operator_mode = "delta_rule"  # force default operator mode if no config
+            recurrent_config = {
+                "order": 1,
+                "gate_type": "k",
+                "linear": True,
+                "trick": "derivative",
+            }
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
         self.head_dim = head_dim or hidden_dim // num_heads
@@ -123,7 +133,7 @@ class LinearAttention(nn.Module):
 
         self.shared_attn = shared_attn
 
-        if not (shared_attn):
+        if not shared_attn:
             self.q_proj = nn.Linear(hidden_dim, num_heads * self.head_dim, bias=bias)
             self.k_proj = nn.Linear(
                 hidden_dim, self.num_key_value_heads * self.head_dim, bias=bias
@@ -160,7 +170,7 @@ class LinearAttention(nn.Module):
         Forward pass for linear attention. Input shape: [B, S, D], output [B, S, D].
         """
 
-        if not (self.shared_attn):
+        if not self.shared_attn:
             hidden_states = x[0] if isinstance(x, (list, tuple)) else x
             # Projections
             q = self.q_proj(hidden_states)
@@ -214,7 +224,7 @@ class LinearAttention(nn.Module):
         g = (f_g, w_g)
 
         # Linear Attention Core, output: [B, H, S, d]
-        if self.bidirectional:  # TODO: experimental, need mask management
+        if self.bidirectional:  # Work only with uncausal attention
             # Forward direction
             out_forward = self.linear_operator(q, k, v, g, **kwargs)
             # Backward direction: flip the input sequence on the time dimension (dim=2)
@@ -236,7 +246,7 @@ class LinearAttention(nn.Module):
 
         # Merge heads and project: [B, H, S, d] -> [B, S, H*d] -> Out proj
         out = rearrange(out, "b h s d -> b s (h d)")
-        # Normalize output (RMS norm)
+        # Normalize output (RMS norm). Note: bidirectional compatibility
         out = out / out.pow(2).mean(dim=-1, keepdim=True).add(1e-6).sqrt()
         # Ensure dtype and device consistency
         out = out.to(dtype=final_dtype, device=final_device)
@@ -256,12 +266,10 @@ class LiZAttention(nn.Module):
         self,
         base_attn: nn.Module,
         layer_idx: int,
-        base_config,  # Backbone Config
+        base_config: PretrainedConfig,  # Backbone Config
         linear_cache: Optional[LCache] = None,
         operator_mode: str = "delta_rule",
-        recurrent_config: Dict[str, Any] = dict(
-            order=1, gate_type="k", linear=True, trick="derivative"
-        ),
+        recurrent_config: Optional[Dict[str, Any]] = None,
         max_self_attn_length: Optional[int] = None,  # unnecessary
         base_scale_attn: bool = False,
         mag_weight: float = 0.5,
@@ -276,8 +284,15 @@ class LiZAttention(nn.Module):
         if isinstance(linear_precision, str):
             linear_precision = getattr(torch, linear_precision)
         self.linear_precision = linear_precision
-
-        self.base_attn = base_attn
+        if recurrent_config is None:
+            operator_mode = "delta_rule"  # force default operator mode if no config
+            recurrent_config = {
+                "order": 1,
+                "gate_type": "k",
+                "linear": True,
+                "trick": "derivative",
+            }
+        self.base_attn: nn.Module = base_attn
         self.base_config = base_config
         self.layer_idx = layer_idx
         self.max_self_attn_length = max_self_attn_length
@@ -318,7 +333,9 @@ class LiZAttention(nn.Module):
             output_size=self.head_dim * self.num_key_value_heads
         )
 
-    def _get_attention_parameters(self, base_attn, base_config):
+    def _get_attention_parameters(
+        self, base_attn: nn.Module, base_config: PretrainedConfig
+    ) -> Tuple[Optional[int], Optional[int], Optional[int], Optional[int]]:
         """Retrieve the attention parameters from the base attention module."""
         # first order base attention module and second order config
         num_heads = (
@@ -327,8 +344,15 @@ class LiZAttention(nn.Module):
             or getattr(base_config, "num_heads", None)
             or getattr(base_config, "num_attention_heads", None)
         )
-        head_dim = getattr(base_attn, "head_dim", None) or getattr(
-            base_config, "head_dim", None
+        head_dim = (
+            getattr(base_attn, "head_dim", None)
+            or getattr(base_attn, "attention_head_size", None)
+            or getattr(base_config, "head_dim", None)
+            or (
+                getattr(base_config, "hidden_size", None) // num_heads
+                if num_heads and getattr(base_config, "hidden_size", None)
+                else None
+            )
         )
         num_key_value_heads = (
             getattr(base_attn, "num_kv_heads", None)
@@ -346,7 +370,9 @@ class LiZAttention(nn.Module):
             num_key_value_groups,
         )
 
-    def _apply_shared_projections(self, hidden_states):
+    def _apply_shared_projections(
+        self, hidden_states: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, nn.Module]:
         base_attn = self.base_attn
         if hasattr(base_attn, "q_proj"):
             # LLama, OLMO and Mistral style
@@ -364,6 +390,12 @@ class LiZAttention(nn.Module):
             qkv = base_attn.c_attn(hidden_states)
             q, k, v = qkv.chunk(3, dim=-1)
             out_proj = base_attn.c_proj
+        elif all(hasattr(base_attn, n) for n in ["query", "key", "value"]):
+            # BERT - ViT
+            q = base_attn.query(hidden_states)
+            k = base_attn.key(hidden_states)
+            v = base_attn.value(hidden_states)
+            out_proj = getattr(base_attn, "dense", None)  # ou output.dense
         else:
             raise ValueError("Unsupported attention module: cannot find projections.")
         # Ensure stability
@@ -372,7 +404,12 @@ class LiZAttention(nn.Module):
         v = ensure_stability(v, min_val=-1e4, max_val=1e4)
         return q, k, v, out_proj
 
-    def _process_self_attn(self, hidden_states, attention_mask, kwargs):
+    def _process_self_attn(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor],
+        kwargs,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[DynamicCache], int]:
         """Process the self-attention part (with truncation)."""
         if self.max_self_attn_length:  # Not needed for SWA (nonparam memorize context)
             hidden_states, attention_mask = truncate_attention_mask(
@@ -418,7 +455,13 @@ class LiZAttention(nn.Module):
         o_base = ensure_stability(o_base, min_val=-1e4, max_val=1e4)
         return o_base, attn_weights, present_key_value, expected_attn_mode
 
-    def _prepare_attn_mixin(self, o_lin, o_base, tensor_dtype, eps=1e-5):
+    def _prepare_attn_mixin(
+        self,
+        o_lin: torch.Tensor,
+        o_base: torch.Tensor,
+        tensor_dtype: torch.dtype,
+        eps: float = 1e-5,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Prepare linear attn for mixing with self attn."""
         # Force cast typing, shape : [b n (h d)]
         o_lin = o_lin.to(tensor_dtype)
@@ -429,7 +472,9 @@ class LiZAttention(nn.Module):
             o_lin = scaler * o_lin
         return o_lin, o_base
 
-    def _apply_mag(self, linear_attention, softmax_attention):
+    def _apply_mag(
+        self, linear_attention: torch.Tensor, softmax_attention: torch.Tensor
+    ) -> torch.Tensor:
         """Apply the MAG strategy"""
         # Left-Padding management
         if linear_attention.shape[1] != softmax_attention.shape[1]:
@@ -466,7 +511,8 @@ class LiZAttention(nn.Module):
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         **kwargs,
-    ):
+    ) -> torch.Tensor:
+        """Mix linear and self attention forward"""
         device = hidden_states.device
         tensor_dtype = hidden_states.dtype
         self.base_attn.to(device)
@@ -502,22 +548,19 @@ class LiZAttention(nn.Module):
         # Return output following transformer convention
         if expected_attn_mode == 3:
             return out, attn_weights, present_key_value
-        elif expected_attn_mode == 2:
+        if expected_attn_mode == 2:
             return out, attn_weights
-        else:
-            return out
+        return out
 
 
 def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-arguments
     model: nn.Module,
     base_config: PretrainedConfig,  # ou LlamaConfig, MistralConfig, etc.
-    liza_attention: LiZAttention,
-    target_modules: list,
+    liza_attention: nn.Module = LiZAttention,
+    target_modules: Optional[list[str]] = None,
     linear_cache: Optional[LCache] = None,
     operator_mode: str = "delta_rule",
-    recurrent_config: Dict[str, Any] = dict(
-        order=1, gate_type="k", linear=True, trick="derivative"
-    ),
+    recurrent_config: Optional[Dict[str, Any]] = None,
     base_scale_attn: bool = False,
     mag_weight: float = 0.5,
     cross_gate: bool = False,
@@ -526,8 +569,28 @@ def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-a
     max_self_attn_length: Optional[int] = None,  # unnecessary
     padding_side: str = "right",  # for tokenizer
     bidirectional: bool = False,  # if True, use bidirectional attention
-):
+) -> Tuple[PreTrainedModel, LCache]:
     """Replace target modules in a model with LiZAttention."""
+    if recurrent_config is None:
+        operator_mode = "delta_rule"  # force default operator mode if no config
+        recurrent_config = {
+            "order": 1,
+            "gate_type": "k",
+            "linear": True,
+            "trick": "derivative",
+        }
+    if target_modules is None:
+        target_modules = ["attn", "self_attn", "attention"]
+    # Find target modules by suffix (e.g., "attn", "attention")
+    target_modules = [
+        name
+        for name, _ in model.named_modules()
+        if any(name.endswith(suffix) for suffix in target_modules)
+        and not any(f".{suffix}." in name for suffix in target_modules)
+    ]
+    if not target_modules:
+        raise ValueError(f"Target modules '{target_modules}' not found in the model.")
+    # Prepare recurrent config
     linear_cache = linear_cache or LCache()
     # Inject LiZAttention into the model
     for name, _ in model.named_modules():
@@ -560,6 +623,47 @@ def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-a
     return model, linear_cache
 
 
+def load_tptt_safetensors(
+    repo_or_path: str, model: PeftModel, token: Optional[str] = None
+) -> Optional[PeftModel]:
+    """Load Tptt safetensor from LoRA/PEFT weights and adapt keys if needed."""
+    fname = "adapter_model.safetensors"
+    # Find file path
+    if os.path.isdir(repo_or_path):
+        path = os.path.join(repo_or_path, fname)
+        if not os.path.exists(path):
+            return None
+    else:
+        if fname not in list_repo_files(repo_or_path, token=token):
+            return None
+        path = hf_hub_download(repo_or_path, fname, token=token)
+
+    # Load weights from safetensors
+    with safe_open(path, framework="pt") as f:
+        state_dict = {k: f.get_tensor(k) for k in f.keys()}
+
+    # Adapt LoRA keys if needed (add .default if expected by the model)
+    def adapt_lora_keys(sd: dict):
+        new_sd = {}
+        for k, v in sd.items():
+            if (
+                k.endswith("lora_A.weight") or k.endswith("lora_B.weight")
+            ) and k.replace(".weight", ".default.weight") in model.state_dict():
+                k = k.replace(".weight", ".default.weight")
+            new_sd[k] = v
+        return new_sd
+
+    state_dict = adapt_lora_keys(state_dict)
+    # Load into model
+    missing, unexpected = model.load_state_dict(state_dict, strict=False, assign=True)
+    missing_lora = [k for k in missing if "lora" in k]
+    if missing_lora:
+        logger.warning("Missing LoRA keys: %s", missing_lora)
+    if unexpected:
+        logger.warning("Unexpected keys: %s", unexpected)
+    return model
+
+
 class TpttModel(PreTrainedModel):
     """
     TPTT model wrapper with linear attention (LiZA) and LoRA support.
@@ -589,11 +693,11 @@ class TpttModel(PreTrainedModel):
                 "Attention implementation is: %s", config.force_attn_implementation
             )
 
-        # 1. Load backbone TODO : support no model.safetensors
+        # 1. Load backbone : support no model.safetensors with load_tptt_safetensors
         self.backbone = AutoModelForCausalLM.from_pretrained(
             config.base_model_name, **kwargs
         )
-        self._retie_lm_after_load(**kwargs)  # Force lm tie weights
+        self.retie_lm_after_load(**kwargs)  # Force lm tie weights
 
         # 2. Inject LiZA attention
         self.linear_cache = LCache()
@@ -605,74 +709,23 @@ class TpttModel(PreTrainedModel):
             lora_config_obj = LoraConfig(**config.lora_config)
             self.backbone = get_peft_model(self.backbone, lora_config_obj)
             if repo_or_path:
-                self.load_peft_safetensors(
-                    repo_or_path, token=kwargs.get("token", None)
+                self.backbone = load_tptt_safetensors(
+                    repo_or_path, self.backbone, token=kwargs.get("token", None)
                 )
-
-    def load_peft_safetensors(self, src, token=None):
-        """Load LoRA/PEFT weights and adapt keys if needed"""
-        fname = "adapter_model.safetensors"
-        # Find file path
-        if os.path.isdir(src):
-            path = os.path.join(src, fname)
-            if not os.path.exists(path):
-                return
-        else:
-            if fname not in list_repo_files(src, token=token):
-                return
-            path = hf_hub_download(src, fname, token=token)
-
-        # Load weights from safetensors
-        with safe_open(path, framework="pt") as f:
-            state_dict = {k: f.get_tensor(k) for k in f.keys()}
-
-        # Adapt LoRA keys if needed (add .default if expected by the model)
-        def adapt_lora_keys(sd):
-            new_sd = {}
-            for k, v in sd.items():
-                if (
-                    k.endswith("lora_A.weight") or k.endswith("lora_B.weight")
-                ) and k.replace(
-                    ".weight", ".default.weight"
-                ) in self.backbone.state_dict():
-                    k = k.replace(".weight", ".default.weight")
-                new_sd[k] = v
-            return new_sd
-
-        state_dict = adapt_lora_keys(state_dict)
-        # Load into model
-        missing, unexpected = self.backbone.load_state_dict(
-            state_dict, strict=False, assign=True
-        )
-        missing_lora = [k for k in missing if "lora" in k]
-        if missing_lora:
-            logger.warning("Missing LoRA keys: %s", missing_lora)
-        if unexpected:
-            logger.warning("Unexpected keys: %s", unexpected)
 
     @staticmethod
     def inject_liza_attention(
-        backbone,
-        config,
-        linear_cache,
-    ):
+        backbone: PreTrainedModel,
+        config: TpttConfig,
+        linear_cache: Optional[LCache] = None,
+    ) -> PreTrainedModel:
         """Inject LiZAttention into the specified target modules of the base model."""
-        # Find target modules by suffix (e.g., "attn", "attention")
-        target_modules = [
-            name
-            for name, _ in backbone.named_modules()
-            if any(name.endswith(suffix) for suffix in config.target_modules_names)
-        ]
-        if not target_modules:
-            raise ValueError(
-                f"Target modules '{config.target_modules_names}' not found in the model."
-            )
         # Inject LiZAttention (external function, not shown here)
-        return get_tptt_model(
+        backbone, linear_cache = get_tptt_model(
             backbone,
             base_config=backbone.config,
             liza_attention=LiZAttention,
-            target_modules=target_modules,
+            target_modules=config.target_modules_names,
             linear_cache=linear_cache,
             operator_mode=config.operator_mode,
             recurrent_config=config.recurrent_config,
@@ -685,8 +738,15 @@ class TpttModel(PreTrainedModel):
             padding_side=config.padding_side,
             bidirectional=config.bidirectional,
         )
+        return backbone, linear_cache
 
-    def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
+    def forward(
+        self,
+        input_ids: Optional[torch.LongTensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        labels: Optional[torch.LongTensor] = None,
+        **kwargs,
+    ):
         """
         Forward pass. All arguments are passed to the underlying base model.
         """
@@ -706,7 +766,7 @@ class TpttModel(PreTrainedModel):
 
     def save_pretrained(self, path: str, **kwargs):
         """Save model weights, config, and source code to the given path."""
-        super().save_pretrained(path, **kwargs)
+        super().save_pretrained(path, **kwargs)  # pylint: disable=no-member
 
         # 1. Save PEFT weights and clean adapter config
         self._save_peft_weights(path, **kwargs)
@@ -729,7 +789,7 @@ class TpttModel(PreTrainedModel):
                 dst = os.path.join(path, fname)
                 shutil.copy2(src, dst)
 
-    def _retie_lm_after_load(self, **kwargs):
+    def retie_lm_after_load(self, **kwargs):
         """Re-link lm_head after loading external weights."""
         embed_lm = find_embedding_lm(self.backbone)
         if embed_lm is not None and hasattr(self.backbone, "lm_head"):
@@ -746,8 +806,8 @@ class TpttModel(PreTrainedModel):
 
     @classmethod
     def from_pretrained(cls, *args, **kwargs):
-        model = super().from_pretrained(*args, **kwargs)
-        model._retie_lm_after_load(**kwargs)
+        model = super().from_pretrained(*args, **kwargs)  # pylint: disable=no-member
+        model.retie_lm_after_load(**kwargs)
         return model
 
 
@@ -759,15 +819,23 @@ class LinearAttentionOp(nn.Module):
 
     def __init__(
         self,
-        layer_idx,
-        operator_mode="delta_rule",
-        recurrent_config=dict(order=1, gate_type="k", linear=True, trick="derivative"),
-        max_chunk_size=64,
-        linear_cache=None,
-        linear_precision=torch.float32,
+        layer_idx: int,
+        operator_mode: str = "delta_rule",
+        recurrent_config: Optional[dict] = None,
+        max_chunk_size: int = 64,
+        linear_cache: Optional[LCache] = None,
+        linear_precision: torch.dtype = torch.float32,
     ):
         super().__init__()
         self.layer_idx = layer_idx
+        if recurrent_config is None:
+            operator_mode = "delta_rule"  # force default operator mode if no config
+            recurrent_config = {
+                "order": 1,
+                "gate_type": "k",
+                "linear": True,
+                "trick": "derivative",
+            }
         self.operator_mode = operator_mode
         self.order = recurrent_config["order"]
         self.gate_type = recurrent_config["gate_type"]
@@ -778,20 +846,22 @@ class LinearAttentionOp(nn.Module):
         self.linear_cache = linear_cache or LCache()
         self.linear_precision = linear_precision
 
-    def compute_gate(self, beta):
+    def compute_gate(self, beta: Tuple[torch.Tensor]) -> torch.Tensor:
         """
         Compute the gating tensor according to the gate_type.
         """
         if self.gate_type == "k":
             return torch.clamp(beta[0], min=1e-6, max=1 - 1e-6)
-        elif self.gate_type == "v":
+        if self.gate_type == "v":
             return torch.clamp(beta[1], min=1e-6, max=1 - 1e-6)
-        elif self.gate_type == "kv":
+        if self.gate_type == "kv":
             return torch.clamp(beta[0] * beta[1], min=1e-6, max=1 - 1e-6)
-        else:
-            raise ValueError(f"Unsupported gate_type: {self.gate_type}")
+        raise ValueError(f"Unsupported gate_type: {self.gate_type}")
 
-    def get_cache(self, use_cache):
+    def get_cache(self, use_cache: bool) -> Tuple[
+        Optional[torch.Tensor],
+        Optional[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]],
+    ]:
         """
         Retrieve recurrent state and qkv buffers from the cache.
         """
@@ -806,7 +876,15 @@ class LinearAttentionOp(nn.Module):
             qkv_buffers = None
         return recurrent_state, qkv_buffers
 
-    def save_cache(self, use_cache, q, k, v, gate, state):
+    def save_cache(
+        self,
+        use_cache: bool,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        gate: torch.Tensor,
+        state: torch.Tensor,
+    ) -> None:
         """
         Save the recurrent state and qkv buffers to the cache.
         """
@@ -823,7 +901,14 @@ class LinearAttentionOp(nn.Module):
             qkv_buffers = None
         self.linear_cache.update(self.layer_idx, recurrent_state=state, qkv=qkv_buffers)
 
-    def forward(self, q, k, v, beta, **kwargs):
+    def forward(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        beta: Union[Tuple[torch.Tensor], torch.Tensor],
+        **kwargs,
+    ) -> torch.Tensor:
         """
         Forward pass for the attention operator.
         """
@@ -869,18 +954,18 @@ class LinearAttentionOp(nn.Module):
 
     @staticmethod
     def chunk_delta_product_forward(
-        query,
-        key,
-        value,
-        beta_gate,
-        chunk_size,
-        n=1,
-        trick="derivative",
-        linear=True,
-        initial_state=None,
-        use_checkpoint=True,
-        linear_precision=torch.float32,
-    ):
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        beta_gate: torch.Tensor,
+        chunk_size: int,
+        n: int = 1,
+        trick: str = "derivative",
+        linear: bool = True,
+        initial_state: Optional[torch.Tensor] = None,
+        use_checkpoint: bool = True,
+        linear_precision: torch.dtype = torch.float32,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Chunkwise parallel implementation https://arxiv.org/abs/2406.06484
         For each chunk, processes chunk_size * n_orders steps (virtual tokens) in order.
@@ -905,14 +990,14 @@ class LinearAttentionOp(nn.Module):
         k_beta = k_chunks * beta_chunks
         v_beta = v_chunks * beta_chunks
 
-        T = -(k_beta @ k_chunks.transpose(-2, -1)).tril(-1)
-        T = ensure_stability(T, min_val=-1e4, max_val=1e4)
+        householder = -(k_beta @ k_chunks.transpose(-2, -1)).tril(-1)
+        householder = ensure_stability(householder, min_val=-1e4, max_val=1e4)
 
         # size : N = chunk_size * n
-        inv_T = fast_invert_matrix(T, dtype=linear_precision)  # [(...),N,N]
+        inv_hh = fast_invert_matrix(householder, dtype=linear_precision)  # [(...),N,N]
 
-        W = ensure_stability(torch.matmul(inv_T, k_beta), min_val=-1e4, max_val=1e4)
-        U = ensure_stability(torch.matmul(inv_T, v_beta), min_val=-1e4, max_val=1e4)
+        w = ensure_stability(torch.matmul(inv_hh, k_beta), min_val=-1e4, max_val=1e4)
+        u = ensure_stability(torch.matmul(inv_hh, v_beta), min_val=-1e4, max_val=1e4)
 
         state_shape = (batch_size, num_heads, n, head_dim, head_dim)
         if initial_state is not None and initial_state.shape == state_shape:
@@ -927,8 +1012,8 @@ class LinearAttentionOp(nn.Module):
 
         output, final_state = sequential_delta_product_scan(
             q_chunks.to(dtype=linear_precision),
-            W.to(dtype=linear_precision),
-            U.to(dtype=linear_precision),
+            w.to(dtype=linear_precision),
+            u.to(dtype=linear_precision),
             n,
             linear,
             chunk_size,
@@ -945,34 +1030,39 @@ class LinearAttentionOp(nn.Module):
 
 
 def sequential_delta_product_scan(
-    q_chunks,
-    W,
-    U,
-    n_orders,
-    linear_activation,
-    current_chunk_size,
-    initial_recurrent_state,
-    linear_precision,
-    use_checkpoint,
-):
+    q_chunks: torch.Tensor,
+    w: torch.Tensor,
+    u: torch.Tensor,
+    n_orders: int,
+    linear_activation: bool,
+    current_chunk_size: int,
+    initial_recurrent_state: torch.Tensor,
+    linear_precision: torch.dtype,
+    use_checkpoint: bool,
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     DeltaProduct implementation https://arxiv.org/abs/2502.10297
     Implements the per-token Householder state updates.
     """
-    B, H, num_chunks_inner, chunk_n_total, D = q_chunks.shape
+    batch, head, num_chunks_inner, chunk_n_total, dim = q_chunks.shape
     output_inner = torch.empty_like(q_chunks)
     # initial_recurrent_state is H_{last_token_of_prev_chunk, n-1} ([B, H, D, D])
     h_0_base = initial_recurrent_state[:, :, -1, :, :].clone()
 
-    def process_one_chunk(q_chunk_params, w_chunk_params, u_chunk_params, h_0_base):
+    def process_one_chunk(
+        q_chunk_params: torch.Tensor,
+        w_chunk_params: torch.Tensor,
+        u_chunk_params: torch.Tensor,
+        h_0_base: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Process a single chunk (with per-token state for n_orders > 1).
         """
         o_intra_current_chunk = torch.zeros(
-            B,
-            H,
+            batch,
+            head,
             chunk_n_total,
-            D,
+            dim,
             device=q_chunk_params.device,
             dtype=linear_precision,
         )
@@ -1033,8 +1123,8 @@ def sequential_delta_product_scan(
 
     for chunk_idx_inner in range(num_chunks_inner):
         q_chunk_params = q_chunks[:, :, chunk_idx_inner]
-        w_chunk_params = W[:, :, chunk_idx_inner]
-        u_chunk_params = U[:, :, chunk_idx_inner]
+        w_chunk_params = w[:, :, chunk_idx_inner]
+        u_chunk_params = u[:, :, chunk_idx_inner]
 
         # Checkpointed call if training
         call = (
@@ -1049,32 +1139,43 @@ def sequential_delta_product_scan(
             u_chunk_params,
             h_0_base,
         )
-        if not (linear_activation):  # unlinear activation between chunks
-            h_0_norm = h_0_base.norm(p=2, dim=-1, keepdim=True) + 1e-6
-            h_0_base = (h_0_norm / 2.0) * (
-                F.gelu(2.0 * h_0_base / h_0_norm, approximate="tanh").to(
-                    dtype=linear_precision
-                )
-            )
+        if not linear_activation:  # unlinear activation between chunks
+            h_0_base = unlinear_activation(h_0_base).to(dtype=linear_precision)
         output_inner[:, :, chunk_idx_inner] = o_intra + o_inter
 
     return output_inner, h_0_base
 
 
-def chunk_sequence(x, num_chunks, chunk_size):
-    """Splits [batch, num_heads, seq_len, head_dim] to  [batch, num_heads, num_chunks, chunk_size, head_dim]"""
-    B, H, _, D = x.shape
-    return x.reshape(B, H, num_chunks, chunk_size, D)
+def unlinear_activation(x: torch.Tensor, scale: float = 2.0) -> torch.Tensor:
+    """Unlinear activation between chunk"""
+    x_n = x.norm(p=2, dim=-1, keepdim=True) + 1e-6
+    x_gelu = F.gelu(scale * x / x_n, approximate="tanh")  # pylint: disable=not-callable
+    return (x / scale) * x_gelu
 
 
-def expand_virtual_tokens(x, n, mode="derivative"):
+def chunk_sequence(x: torch.Tensor, num_chunks: int, chunk_size: int) -> torch.Tensor:
+    """Splits [B, H, S, D] to  [B, H, num_chunks, chunk_size, D]"""
+    batch_size, num_heads, _, head_dim = x.shape
+    return x.reshape(batch_size, num_heads, num_chunks, chunk_size, head_dim)
+
+
+def expand_virtual_tokens(
+    x: torch.Tensor, n: int, mode: str = "derivative"
+) -> torch.Tensor:
     """Expand tokens into 'n' virtual tokens using the selected trick."""
-    B, H, S, D = x.shape
+    batch_size, num_heads, seq_len, head_dim = x.shape
     device, dtype = x.device, x.dtype
 
-    def derivative_expand(x):
+    def derivative_expand(x: torch.Tensor) -> torch.Tensor:
+        """Expand tokens using the derivative trick."""
         x_pad = torch.cat(
-            [torch.zeros(B, H, n - 1, D, device=device, dtype=dtype), x], dim=2
+            [
+                torch.zeros(
+                    batch_size, num_heads, n - 1, head_dim, device=device, dtype=dtype
+                ),
+                x,
+            ],
+            dim=2,
         )
         coeffs = torch.tensor(
             [(-1) ** k * math.comb(n - 1, k) for k in range(n)],
@@ -1086,36 +1187,45 @@ def expand_virtual_tokens(x, n, mode="derivative"):
             (x_pad.unfold(2, n, 1) * coeffs.view(1, 1, 1, 1, n))
             .flip(-1)
             .permute(0, 1, 2, 4, 3)
-            .reshape(B, H, S * n, D)
+            .reshape(batch_size, num_heads, seq_len * n, head_dim)
         )
 
-    def rotative_expand(x):
-        Dp = D // 2
+    def rotative_expand(x: torch.Tensor) -> torch.Tensor:
+        """Expand tokens using the rotative trick."""
+        d_parity = head_dim // 2
         angles = torch.arange(n, device=device, dtype=dtype) * (2 * math.pi / n)
         cos = torch.cos(angles).view(1, 1, 1, n, 1)
         sin = torch.sin(angles).view(1, 1, 1, n, 1)
-        if D % 2:
-            x_pairs = x[..., :-1].view(B, H, S, Dp, 2)
+        if head_dim % 2:
+            x_pairs = x[..., :-1].view(batch_size, num_heads, seq_len, d_parity, 2)
         else:
-            x_pairs = x.view(B, H, S, Dp, 2)
-        x_pairs = x_pairs.unsqueeze(3).expand(B, H, S, n, Dp, 2)
+            x_pairs = x.view(batch_size, num_heads, seq_len, d_parity, 2)
+        x_pairs = x_pairs.unsqueeze(3).expand(
+            batch_size, num_heads, seq_len, n, d_parity, 2
+        )
         x0, x1 = x_pairs[..., 0], x_pairs[..., 1]
         x0r = x0 * cos - x1 * sin
         x1r = x0 * sin + x1 * cos
-        rot = torch.stack([x0r, x1r], -1).reshape(B, H, S, n, Dp * 2)
-        if D % 2:
-            last = x[..., -1].unsqueeze(-1).unsqueeze(3).expand(B, H, S, n, 1)
+        rot = torch.stack([x0r, x1r], -1).reshape(
+            batch_size, num_heads, seq_len, n, d_parity * 2
+        )
+        if head_dim % 2:
+            last = (
+                x[..., -1]
+                .unsqueeze(-1)
+                .unsqueeze(3)
+                .expand(batch_size, num_heads, seq_len, n, 1)
+            )
             rot = torch.cat([rot, last], -1)
-        return rot.reshape(B, H, S * n, D)
+        return rot.reshape(batch_size, num_heads, seq_len * n, head_dim)
 
     if mode == "derivative":
         return derivative_expand(x)
-    elif mode == "rotative":
+    if mode == "rotative":
         return rotative_expand(x)
-    elif mode == "combined":
+    if mode == "combined":
         return (derivative_expand(x) + rotative_expand(x)) / 2
-    else:
-        raise ValueError(f"Unknown mode: {mode}")
+    raise ValueError(f"Unknown mode: {mode}")
 
 
 def extract_layer_idx(module_name: str) -> int:
@@ -1126,7 +1236,7 @@ def extract_layer_idx(module_name: str) -> int:
     return -1
 
 
-def find_embedding_lm(module):
+def find_embedding_lm(module: nn.Module) -> Optional[nn.Module]:
     """Find the embedding weight in a model module."""
     for _, child in module.named_modules():
         if hasattr(child, "embed_tokens") and hasattr(child.embed_tokens, "weight"):
@@ -1138,7 +1248,9 @@ def find_embedding_lm(module):
     return None
 
 
-def ensure_stability(tensor, min_val=-1e4, max_val=1e4):
+def ensure_stability(
+    tensor: torch.Tensor, min_val: float = -1e4, max_val: float = 1e4
+) -> torch.Tensor:
     """stability forcing"""
     dtype = tensor.dtype
     center = (max_val + min_val) / 2
@@ -1147,7 +1259,9 @@ def ensure_stability(tensor, min_val=-1e4, max_val=1e4):
     return tensor.to(dtype=dtype)
 
 
-def apply_linear_attention_mask(attention_mask, v, padding_side="right"):
+def apply_linear_attention_mask(
+    attention_mask: torch.Tensor, v: torch.Tensor, padding_side: str = "right"
+) -> torch.Tensor:
     """Extract if padding --> [B,S]"""
     if attention_mask.dim() == 4 and attention_mask.shape[1] == 1:
         mask = attention_mask.diagonal(dim1=-2, dim2=-1).squeeze(1)
@@ -1179,7 +1293,9 @@ def apply_linear_attention_mask(attention_mask, v, padding_side="right"):
     return v * mask
 
 
-def truncate_attention_mask(hidden_states, attention_mask, max_length):
+def truncate_attention_mask(
+    hidden_states: torch.Tensor, attention_mask: torch.Tensor, max_length: int
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Truncate hidden_states and attention_mask to the last window of size max_length"""
     seq_dim = 1  # convention: (batch, seq, ...)
     seq_len = hidden_states.shape[seq_dim]
@@ -1202,18 +1318,22 @@ def truncate_attention_mask(hidden_states, attention_mask, max_length):
     return hidden_states, attention_mask
 
 
-def fast_invert_matrix(T, dtype=torch.float32):
+def fast_invert_matrix(
+    tri_tensor: torch.Tensor, dtype: torch.dtype = torch.float32
+) -> torch.Tensor:
     """Equivalent to vectorized forward substitution applied to the identity matrix."""
-    T = T.to(dtype=dtype).clone()
-    chunk_size = T.shape[-1]
+    tri_tensor = tri_tensor.to(dtype=dtype).clone()
+    chunk_size = tri_tensor.shape[-1]
 
     for i in range(1, chunk_size):
-        T[..., i, :i] = T[..., i, :i] + (
-            T[..., i, :, None].clone() * T[..., :, :i].clone()
+        tri_tensor[..., i, :i] = tri_tensor[..., i, :i] + (
+            tri_tensor[..., i, :, None].clone() * tri_tensor[..., :, :i].clone()
         ).sum(-2)
 
-    T = T + torch.eye(chunk_size, dtype=dtype, device=T.device)
-    return T.to(dtype=dtype)
+    tri_tensor = tri_tensor + torch.eye(
+        chunk_size, dtype=dtype, device=tri_tensor.device
+    )
+    return tri_tensor.to(dtype=dtype)
 
 
 def get_valid_chunk_size(total_l: int, chunk_size: int) -> int:
@@ -1225,12 +1345,19 @@ def get_valid_chunk_size(total_l: int, chunk_size: int) -> int:
 
 
 ## RARELY
-def split_qkv(base_attn, qkv):
+def split_qkv(
+    base_attn: nn.Module, qkv: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Split the QKV tensor into separate Q, K, and V tensors."""
     num_q_heads = getattr(base_attn, "num_q_heads", None)
     num_k_heads = getattr(base_attn, "num_k_heads", None)
     num_v_heads = getattr(base_attn, "num_v_heads", None)
     head_dim = getattr(base_attn, "head_dim", None)
+
+    if num_q_heads is None or num_k_heads is None or num_v_heads is None:
+        raise ValueError(
+            "Base attention must have num_q_heads, num_k_heads, and num_v_heads defined."
+        )
 
     q_len = num_q_heads * head_dim
     k_len = num_k_heads * head_dim
@@ -1259,7 +1386,9 @@ def match_dim(x: torch.Tensor, dim: int, target_size: int) -> torch.Tensor:
     return x
 
 
-def soft_clamp(x, min_val=1e-6, max_val=1 - 1e-6):
+def soft_clamp(
+    x: torch.Tensor, min_val: float = 1e-6, max_val: float = 1 - 1e-6
+) -> torch.Tensor:
     """Differentiable clamping for stability"""
     dtype = x.dtype
     scale = (max_val - min_val) / 2
@@ -1267,7 +1396,7 @@ def soft_clamp(x, min_val=1e-6, max_val=1 - 1e-6):
     return (torch.tanh((x - center) / scale) * scale + center).to(dtype=dtype)
 
 
-def describe(x, name="tensor"):
+def describe(x: torch.Tensor, name="tensor") -> None:
     """Prints the shape, min, max, mean, and std of a tensor."""
     stats = (x.min(), x.max(), x.mean(), x.std())
     print(
