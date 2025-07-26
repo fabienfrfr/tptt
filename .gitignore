@@ -14,3 +14,6 @@ __pycache__/
 *.fdb_latexmk
 *.bbl
 *.blg
+
+docs/build/
+docs/_build/

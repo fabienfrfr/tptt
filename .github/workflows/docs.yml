@@ -1,0 +1,43 @@
+name: Build and Publish Documentation
+
+on:
+  push:
+    branches:
+      - main
+      # - dev   # Also trigger this workflow on push to dev branch
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    # Ensure the GITHUB_TOKEN has write access to repo contents
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.x   # Use Python 3 (latest compatible)
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install sphinx sphinx-rtd-theme  # Or your chosen theme
+
+      - name: Build documentation
+        run: |
+          cd docs
+          make html
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}      # Token to authenticate deployment
+          publish_dir: ./docs/build/html                  # Directory containing built docs
+          publish_branch: gh-pages                         # Branch to push to
+          user_name: "github-actions[bot]"                # Committer name
+          user_email: "github-actions[bot]@users.noreply.github.com"  # Committer email
+          keep_files: false                                # Optional: clean files before pushing

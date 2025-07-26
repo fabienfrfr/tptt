@@ -10,6 +10,9 @@
     <a href="https://github.com/fabienfrfr/tptt/">
         <img alt="Release" src="https://img.shields.io/github/v/release/fabienfrfr/tptt?color=brightgreen">
     </a>
+    <a href="https://fabienfrfr.github.io/tptt/">
+        <img alt="Documentation" src="https://img.shields.io/badge/docs-online-blue">
+    </a>
 </p>
 
 <h3 align="center">
@@ -88,7 +91,7 @@ layers = nn.ModuleList([
 ## Development
 
 - Code is organized into modular components under the `src/tptt` directory.
-- Use `pytest` for testing and `sphinx` for documentation. 🔥
+- Use `pytest` for testing and `sphinx` for documentation. See on this [link](https://fabienfrfr.github.io/tptt/)🔥
 - Contributions and feature requests are welcome!
 
 ---
