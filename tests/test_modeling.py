@@ -7,8 +7,7 @@ import pytest
 import torch
 from transformers import DynamicCache
 
-from src.tptt.modeling_tptt import (LiZAttention, get_tptt_model,
-                                    load_tptt_safetensors)
+from src.tptt.modeling_tptt import LiZAttention, get_tptt_model
 
 MODULE = "src.tptt.modeling_tptt"  # for patch
 
@@ -301,7 +300,6 @@ def test_lizattention_scaling_and_attrs(monkeypatch):
     assert hasattr(liz, "head_dim")
     assert hasattr(liz, "scaling")
     assert hasattr(liz, "linear_attn")
-    assert hasattr(liz, "pool_g")
     assert abs(liz.scaling - 0.5) < 1e-4
 
 
@@ -631,165 +629,4 @@ def test_get_tptt_model_raise_on_no_target_module(monkeypatch):
     base_config = MagicMock()
     model = DummyModel()
     with pytest.raises(ValueError, match="Target modules"):
-        get_tptt_model(model, base_config, target_modules=["doesntexist"])
-
-
-def make_fake_state(keys=("a.lora_A.weight", "b.lora_B.weight")):
-    """Fake state dict for safetensors."""
-    return {k: f"tensor_{k}" for k in keys}
-
-
-def make_fake_model(state_keys):
-    """Return a MagicMock-like model with required API."""
-    model = MagicMock()
-    # Returns your input keys (simulate expected keys in model)
-    model.state_dict.return_value = {k: None for k in state_keys}
-
-    # load_state_dict returns lists of missing/unexpected keys
-    def load_state_dict(sd, strict, assign):
-        # Return missing all "lora" that not in state_dict, and unexpected all that don't match
-        missing = [k for k in model.state_dict() if k not in sd]
-        unexpected = [k for k in sd if k not in model.state_dict()]
-        return (missing, unexpected)
-
-    model.load_state_dict.side_effect = load_state_dict
-    return model
-
-
-def test_load_tptt_safetensors_local_load(monkeypatch):
-    """Load from local dir (file exists), adapts keys if needed and loads into model."""
-
-    fake_path = "/fakepath"
-    fake_file = "/fakepath/adapter_model.safetensors"
-    fake_sd = make_fake_state()
-    # Model expects keys with ".default"
-    model = make_fake_model(["a.lora_A.default.weight", "b.lora_B.default.weight"])
-
-    # Patch os, safetensors
-    monkeypatch.setattr(f"{MODULE}.os.path.isdir", lambda x: True)
-    monkeypatch.setattr(f"{MODULE}.os.path.exists", lambda x: x == fake_file)
-    monkeypatch.setattr(f"{MODULE}.os.path.join", lambda a, b: f"{a}/{b}")
-    # Patch safe_open
-    safe_open_ctx = MagicMock()
-    safe_open_ctx.__enter__.return_value.keys.return_value = list(fake_sd)
-    safe_open_ctx.__enter__.return_value.get_tensor.side_effect = lambda k: fake_sd[k]
-    monkeypatch.setattr(f"{MODULE}.safe_open", MagicMock(return_value=safe_open_ctx))
-    # Patch logger to silence warnings
-    monkeypatch.setattr(f"{MODULE}.logger", MagicMock())
-
-    # Should return the model
-    out = load_tptt_safetensors(fake_path, model)
-    assert out is model
-    # Keys should have been adapted, and load_state_dict called with .default in
-    args, _ = model.load_state_dict.call_args
-    for k in ["a.lora_A.default.weight", "b.lora_B.default.weight"]:
-        assert k in args[0]
-
-
-def test_load_tptt_safetensors_local_missing(monkeypatch):
-    """Returns None if file missing and isdir True."""
-    from src.tptt.modeling_tptt import load_tptt_safetensors
-
-    fake_path = "/fakepath"
-    fake_file = "/fakepath/adapter_model.safetensors"
-    model = make_fake_model([])
-    monkeypatch.setattr(f"{MODULE}.os.path.isdir", lambda x: True)
-    monkeypatch.setattr(f"{MODULE}.os.path.exists", lambda x: False)
-    monkeypatch.setattr(f"{MODULE}.os.path.join", lambda a, b: f"{a}/{b}")
-    out = load_tptt_safetensors(fake_path, model)
-    assert out is None
-
-
-def test_load_tptt_safetensors_repo_missing(monkeypatch):
-    """Returns None if not local and no file found in repo."""
-    from src.tptt.modeling_tptt import load_tptt_safetensors
-
-    repo = "mymodel"
-    model = make_fake_model([])
-    monkeypatch.setattr(f"{MODULE}.os.path.isdir", lambda x: False)
-    monkeypatch.setattr(f"{MODULE}.list_repo_files", lambda repo, token=None: ["abc"])
-    out = load_tptt_safetensors(repo, model)
-    assert out is None
-
-
-def test_load_tptt_safetensors_repo_load(monkeypatch):
-    """Loads from HF repo (hf_hub_download used)."""
-    from src.tptt.modeling_tptt import load_tptt_safetensors
-
-    fake_sd = make_fake_state()
-    model = make_fake_model(["a.lora_A.default.weight", "b.lora_B.default.weight"])
-    repo = "repo"
-    fake_file = "/cachepath"
-
-    monkeypatch.setattr(f"{MODULE}.os.path.isdir", lambda x: False)
-    monkeypatch.setattr(
-        f"{MODULE}.list_repo_files",
-        lambda repo, token=None: ["adapter_model.safetensors"],
-    )
-    monkeypatch.setattr(
-        f"{MODULE}.hf_hub_download", lambda repo, fname, token=None: fake_file
-    )
-
-    safe_open_ctx = MagicMock()
-    safe_open_ctx.__enter__.return_value.keys.return_value = list(fake_sd)
-    safe_open_ctx.__enter__.return_value.get_tensor.side_effect = lambda k: fake_sd[k]
-    monkeypatch.setattr(f"{MODULE}.safe_open", MagicMock(return_value=safe_open_ctx))
-    # Patch logger to silence warnings
-    monkeypatch.setattr(f"{MODULE}.logger", MagicMock())
-
-    out = load_tptt_safetensors(repo, model)
-    assert out is model
-    args, kwargs = model.load_state_dict.call_args
-    for k in ["a.lora_A.default.weight", "b.lora_B.default.weight"]:
-        assert k in args[0]
-
-
-@pytest.mark.parametrize(
-    "model_keys, fake_sd, expect_missing, expect_unexpected",
-    [
-        # 1. Warning ONLY missing_lora
-        (["a.lora_A.default.weight", "foo"], {"foo": "bar"}, True, False),
-        # 2. Warning ONLY unexpected
-        (["foo"], {"foo": "bar", "surprise": "baz"}, False, True),
-        # 3. Warning on both
-        (["a.lora_A.default.weight"], {"surprise": "baz"}, True, True),
-    ],
-)
-def test_load_tptt_safetensors_warn_branches(
-    monkeypatch, model_keys, fake_sd, expect_missing, expect_unexpected
-):
-    """Test that logger.warning triggers for missing_lora and/or unexpected keys as needed."""
-
-    def make_fake_model(state_keys):
-        """make faker"""
-        model = MagicMock()
-        model.state_dict.return_value = {k: None for k in state_keys}
-
-        def load_state_dict(sd, strict, assign):
-            missing = [k for k in model.state_dict() if k not in sd]
-            unexpected = [k for k in sd if k not in model.state_dict()]
-            return missing, unexpected
-
-        model.load_state_dict.side_effect = load_state_dict
-        return model
-
-    model = make_fake_model(model_keys)
-
-    monkeypatch.setattr(f"{MODULE}.os.path.isdir", lambda x: True)
-    monkeypatch.setattr(f"{MODULE}.os.path.exists", lambda x: True)
-    monkeypatch.setattr(f"{MODULE}.os.path.join", lambda a, b: f"{a}/{b}")
-
-    safe_open_ctx = MagicMock()
-    safe_open_ctx.__enter__.return_value.keys.return_value = list(fake_sd)
-    safe_open_ctx.__enter__.return_value.get_tensor.side_effect = lambda k: fake_sd[k]
-    monkeypatch.setattr(f"{MODULE}.safe_open", MagicMock(return_value=safe_open_ctx))
-
-    logger_mock = MagicMock()
-    monkeypatch.setattr(f"{MODULE}.logger", logger_mock)
-
-    load_tptt_safetensors("/fakepath", model)
-
-    # Check warnings
-    calls = [c[0][0] for c in logger_mock.warning.call_args_list]
-    assert ("Missing LoRA keys" in "".join(calls)) is expect_missing
-    assert ("Unexpected keys" in "".join(calls)) is expect_unexpected
+        get_tptt_model(model, base_config, target_modules_names=["doesntexist"])

@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      # - dev   # Also trigger this workflow on push to dev branch
+      #- dev   # Also trigger this workflow on push to dev branch
 
 jobs:
   build:

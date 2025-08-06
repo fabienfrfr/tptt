@@ -23,7 +23,7 @@ def patch_huggingface(monkeypatch):
         "src.tptt.configuration_tptt.AutoConfig.from_pretrained",
         lambda *a, **kw: MagicMock(),
     )
-    # Patch loading of any model backbone from HF
+    # Patch loading of any model tptt_model from HF
     monkeypatch.setattr(
         "transformers.AutoModelForCausalLM.from_pretrained", lambda *a, **k: MagicMock()
     )
@@ -35,103 +35,61 @@ def patch_huggingface(monkeypatch):
 
 class DummyConfig(TpttConfig):
     def __init__(self, **kwargs):
-        kwargs.setdefault("base_model_name", "unit/test-backbone")
+        kwargs.setdefault("base_model_name", "unit/test-tptt_model")
         super().__init__(**kwargs)
 
 
 @pytest.fixture
 def setup_model(monkeypatch):
     """Patch all ext deps of TpttModel for isolated tests."""
-    backbone_mock = MagicMock()
+    tptt_model_mock = MagicMock()
     monkeypatch.setattr(
         "src.tptt.modeling_tptt.AutoModelForCausalLM.from_pretrained",
-        MagicMock(return_value=backbone_mock),
+        MagicMock(return_value=tptt_model_mock),
     )
     monkeypatch.setattr("src.tptt.modeling_tptt.LCache", MagicMock())
     monkeypatch.setattr("src.tptt.modeling_tptt.LiZAttention", MagicMock())
     monkeypatch.setattr(
         "src.tptt.modeling_tptt.get_tptt_model",
-        lambda *a, **kw: (backbone_mock, "patched-linear-cache"),
+        lambda *a, **kw: (tptt_model_mock, "patched-linear-cache"),
     )
     monkeypatch.setattr(
         "src.tptt.modeling_tptt.LoraConfig", lambda **kw: "lora_conf_obj"
     )
     monkeypatch.setattr(
         "src.tptt.modeling_tptt.get_peft_model",
-        lambda backbone, lora: backbone_mock,
+        lambda tptt_model, lora: tptt_model_mock,
     )
     monkeypatch.setattr(
         "src.tptt.modeling_tptt.load_tptt_safetensors",
-        lambda repo, model, token=None: backbone_mock,
+        lambda repo, model, token=None, init=False: tptt_model_mock,
     )
     logger_mock = MagicMock()
     monkeypatch.setattr("src.tptt.modeling_tptt.logger", logger_mock)
-    return backbone_mock, logger_mock
-
-
-def test_init_warn_force_attn(setup_model):
-    """Warns if force_attn_implementation set in config."""
-
-    _, logger_mock = setup_model
-    cfg = DummyConfig(force_attn_implementation="cuda")
-    TpttModel(cfg)
-    assert logger_mock.warning.called
-    msg = logger_mock.warning.call_args[0][0]
-    assert "Attention implementation is:" in msg
+    return tptt_model_mock, logger_mock
 
 
 def test_init_lora_and_load(setup_model):
     """Covers lora_config, get_peft_model/apply_safetensors, _base_path logic."""
-    from src.tptt.modeling_tptt import TpttModel
 
     cfg = DummyConfig(lora_config={"alpha": 32}, _base_path="/somewhere")
     model = TpttModel(cfg)
-    assert hasattr(model.backbone, "_loaded_safetensor")
-
-
-def test_init_no_forced_attn(setup_model):
-    """Backbone is loaded with no warning if force_attn_implementation is None."""
-
-    _, logger_mock = setup_model
-    logger_mock.warning.reset_mock()
-    cfg = DummyConfig(force_attn_implementation=None)
-    TpttModel(cfg)
-    all_warnings = [str(call[0][0]) for call in logger_mock.warning.call_args_list]
-    assert not any("Attention implementation is:" in log for log in all_warnings)
-
-
-def test_inject_liza_attention(monkeypatch):
-    """Delegates to get_tptt_model and returns as expected."""
-
-    called = {}
-
-    def fake_get_tptt_model(*args, **kwargs):
-        called["args"] = args
-        called["kwargs"] = kwargs
-        return "bb", "lc"
-
-    monkeypatch.setattr("src.tptt.modeling_tptt.get_tptt_model", fake_get_tptt_model)
-    backbone = MagicMock()
-    backbone.config = MagicMock()
-    config = MagicMock()  # n'a pas besoin d'être DummyConfig pour test statique
-    bb, lc = TpttModel.inject_liza_attention(backbone, config, "lc")
-    assert bb == "bb" and lc == "lc"
-    assert called["args"][0] == backbone
+    assert hasattr(model.tptt_model, "_loaded_safetensor")
 
 
 def test_forward_training_sets_cache(setup_model):
     """Forward sets use_cache to False during training, removes num_items_in_batch."""
 
-    backbone_mock, _ = setup_model
+    tptt_model_mock, _ = setup_model
     cfg = DummyConfig()
     model = TpttModel(cfg)
     model.train(True)
     dummy_labels = torch.ones(1, 1).long()
     dummy_ids = torch.ones(1, 1).long()
     dummy_amask = torch.ones(1, 1)
-    model.backbone.reset_mock()
+    model.tptt_model.reset_mock()
     model.forward(dummy_ids, dummy_amask, dummy_labels, num_items_in_batch=3)
-    args, kwargs = model.backbone.call_args
+    args, kwargs = model.tptt_model.call_args
     assert kwargs["use_cache"] is False
     assert "num_items_in_batch" not in kwargs
 
@@ -139,71 +97,28 @@ def test_forward_training_sets_cache(setup_model):
 def test_forward_eval_sets_cache(setup_model):
     """Eval mode: removes num_items_in_batch & sets use_cache=False if not present."""
 
-    backbone_mock, _ = setup_model
+    tptt_model_mock, _ = setup_model
     cfg = DummyConfig()
     model = TpttModel(cfg)
     model.train(False)
-    model.backbone.reset_mock()
+    model.tptt_model.reset_mock()
     # no use_cache given
     model.forward(torch.ones(1, 1).long(), torch.ones(1, 1), num_items_in_batch=5)
-    args, kwargs = model.backbone.call_args
+    args, kwargs = model.tptt_model.call_args
     assert kwargs["use_cache"] is False
     assert "num_items_in_batch" not in kwargs
 
 
 def test_generate_delegation(setup_model):
-    """generate() delegates to backbone.generate"""
+    """generate() delegates to tptt_model.generate"""
 
-    backbone_mock, _ = setup_model
-    backbone_mock.generate.return_value = "result"
+    tptt_model_mock, _ = setup_model
+    tptt_model_mock.generate.return_value = "result"
     cfg = DummyConfig()
     model = TpttModel(cfg)
     result = model.generate(1, 2)
-    backbone_mock.generate.assert_called_with(1, 2)
+    tptt_model_mock.generate.assert_called_with(1, 2)
     assert result == "result"
-
-
-def test_save_pretrained_calls_all(monkeypatch, setup_model, tmp_path):
-    """Tests save_pretrained, _save_peft_weights, _copy_source_files."""
-
-    cfg = DummyConfig()
-    model = TpttModel(cfg)
-    model._save_peft_weights = MagicMock()
-    model._copy_source_files = MagicMock()
-    super_save = MagicMock()
-    monkeypatch.setattr(
-        "src.tptt.modeling_tptt.PreTrainedModel.save_pretrained", super_save
-    )
-    model.save_pretrained(str(tmp_path))
-    assert super_save.called
-    assert model._save_peft_weights.called
-    assert model._copy_source_files.called
-
-
-def test_save_peft_weights_removes_config(setup_model, tmp_path):
-    """_save_peft_weights removes adapter_config.json if exists."""
-
-    cfg = DummyConfig()
-    model = TpttModel(cfg)
-    model.backbone.save_pretrained = MagicMock()
-    config_path = os.path.join(tmp_path, "adapter_config.json")
-    with open(config_path, "w") as f:
-        f.write("abc")
-    assert os.path.exists(config_path)
-    model._save_peft_weights(str(tmp_path))
-    assert not os.path.exists(config_path)
-
-
-def test_save_peft_weights_no_config(setup_model, tmp_path):
-    """_save_peft_weights does nothing if adapter_config.json not there."""
-
-    cfg = DummyConfig()
-    model = TpttModel(cfg)
-    model.backbone.save_pretrained = MagicMock()
-    config_path = os.path.join(tmp_path, "adapter_config.json")
-    if os.path.exists(config_path):
-        os.remove(config_path)
-    model._save_peft_weights(str(tmp_path))  # Doit juste passer
 
 
 def test_copy_source_files(setup_model, monkeypatch, tmp_path):
@@ -235,15 +150,15 @@ def test_retie_lm_after_load_share(setup_model, monkeypatch):
 
     embed = MagicMock()
     embed.weight = nn.Parameter(torch.randn(3, 5))
-    backbone = MagicMock()
-    backbone.lm_head = None
+    tptt_model = MagicMock()
+    tptt_model.lm_head = None
     monkeypatch.setattr("src.tptt.modeling_tptt.find_embedding_lm", lambda x: embed)
     logger_mock = MagicMock()
     monkeypatch.setattr("src.tptt.modeling_tptt.logger", logger_mock)
     model = TpttModel(DummyConfig())
-    model.backbone = backbone
+    model.tptt_model = tptt_model
     model.retie_lm_after_load(tie_word_embeddings=True)
-    assert backbone.lm_head.weight is embed.weight
+    assert tptt_model.lm_head.weight is embed.weight
     assert logger_mock.info.called
     msg = logger_mock.info.call_args[0][0]
     assert "shared" in msg
@@ -254,15 +169,15 @@ def test_retie_lm_after_load_clone(setup_model, monkeypatch):
 
     embed = MagicMock()
     embed.weight = nn.Parameter(torch.randn(3, 5))
-    backbone = type("B", (), {})()
-    backbone.lm_head = None
+    tptt_model = type("B", (), {})()
+    tptt_model.lm_head = None
     monkeypatch.setattr("src.tptt.modeling_tptt.find_embedding_lm", lambda x: embed)
     logger_mock = MagicMock()
     monkeypatch.setattr("src.tptt.modeling_tptt.logger", logger_mock)
     model = TpttModel(DummyConfig())
-    model.backbone = backbone
+    model.tptt_model = tptt_model
     model.retie_lm_after_load(tie_word_embeddings=False)
-    assert backbone.lm_head.weight is not embed.weight
+    assert tptt_model.lm_head.weight is not embed.weight
     assert logger_mock.info.called
     msg = logger_mock.info.call_args[0][0]
     assert "cloned" in msg

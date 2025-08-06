@@ -10,7 +10,7 @@ def test_inject_linear_attention_replaces_module(dummy_decoder, dummy_config):
         model,
         dummy_config,
         liza_attention=LiZAttention,
-        target_modules=["self_attn"],
+        target_modules_names=["self_attn"],
         mag_weight=0.7,
     )
     assert isinstance(injected.self_attn, LiZAttention)

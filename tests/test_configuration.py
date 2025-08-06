@@ -182,7 +182,7 @@ def test_tptt_config_bidirectional_true(capfd):
     assert config.bidirectional is True
 
 
-def test_tptt_config_padding_side_default(capfd):
+def test_tptt_config_padding_side_default(caplog):
     """Test padding config"""
 
     class DummyConfig(PretrainedConfig):
@@ -192,9 +192,9 @@ def test_tptt_config_padding_side_default(capfd):
             super().__init__()
             self.hidden_size = 128
 
-    config = TpttConfig(base_model_config=DummyConfig(), padding_side=None)
-    out, _ = capfd.readouterr()
-    assert "defaulting to 'right'" in out
+    with caplog.at_level("INFO"):
+        config = TpttConfig(base_model_config=DummyConfig(), padding_side=None)
+    assert any("defaulting to 'right'" in message for message in caplog.messages)
     assert config.padding_side == "right"
 
 

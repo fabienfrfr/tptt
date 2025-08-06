@@ -20,9 +20,11 @@ from einops import rearrange
 from huggingface_hub import hf_hub_download, list_repo_files
 from peft import LoraConfig, PeftModel, get_peft_model
 from safetensors import safe_open
+from safetensors.torch import save_file
 from torch import nn
 from torch.utils.checkpoint import checkpoint
-from transformers import AutoModelForCausalLM, DynamicCache, PreTrainedModel
+from transformers import (AutoConfig, AutoModelForCausalLM, DynamicCache,
+                          PreTrainedModel)
 from transformers.configuration_utils import PretrainedConfig
 
 from .configuration_tptt import TpttConfig
@@ -110,15 +112,13 @@ class LinearAttention(nn.Module):
         linear_cache: Optional[LCache] = None,
         max_chunk_size: int = 64,
         bidirectional: bool = False,  # not used if causal
+        pooling_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__()
-        if recurrent_config is None:
-            operator_mode = "delta_rule"  # force default operator mode if no config
-            recurrent_config = {
-                "order": 1,
-                "gate_type": "k",
-                "linear": True,
-                "trick": "derivative",
+        if pooling_config is None:
+            pooling_config = {
+                "offsets": (0, 1, 2),
+                "mode": "replicate",
             }
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
@@ -155,8 +155,9 @@ class LinearAttention(nn.Module):
         )
         self.bidirectional = bidirectional
         # Causal average pooling for gating
+        self.pooling_config = pooling_config
         self.pool_g = CausalAvgPool1d(
-            output_size=self.head_dim * self.num_key_value_heads
+            output_size=self.head_dim * self.num_key_value_heads, **pooling_config
         )
 
     def forward(
@@ -279,19 +280,12 @@ class LiZAttention(nn.Module):
         padding_side: str = "right",  # for tokenizer
         disable_linear_attn: bool = False,
         bidirectional: bool = False,  # if True, use bidirectional attention
+        pooling_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__()
         if isinstance(linear_precision, str):
             linear_precision = getattr(torch, linear_precision)
         self.linear_precision = linear_precision
-        if recurrent_config is None:
-            operator_mode = "delta_rule"  # force default operator mode if no config
-            recurrent_config = {
-                "order": 1,
-                "gate_type": "k",
-                "linear": True,
-                "trick": "derivative",
-            }
         self.base_attn: nn.Module = base_attn
         self.base_config = base_config
         self.layer_idx = layer_idx
@@ -327,10 +321,7 @@ class LiZAttention(nn.Module):
             max_chunk_size=max_chunk_size,
             padding_side=padding_side,
             bidirectional=bidirectional,
-        )
-
-        self.pool_g = CausalAvgPool1d(
-            output_size=self.head_dim * self.num_key_value_heads
+            pooling_config=pooling_config,
         )
 
     def _get_attention_parameters(
@@ -553,12 +544,57 @@ class LiZAttention(nn.Module):
         return out
 
 
+def load_tptt_safetensors(
+    repo_or_path: str,
+    model: PeftModel,
+    token: Optional[str] = None,
+    init: bool = False,
+) -> Optional[PeftModel]:
+    """Load Tptt safetensor from LoRA/PEFT weights and adapt keys if needed."""
+    fname = "adapter_model.safetensors"
+    # Find file path
+    if os.path.isdir(repo_or_path):
+        path = os.path.join(repo_or_path, fname)
+        if not os.path.exists(path):
+            return None
+    else:
+        if fname not in list_repo_files(repo_or_path, token=token):
+            return None
+        path = hf_hub_download(repo_or_path, fname, token=token)
+
+    # Load weights from safetensors
+    with safe_open(path, framework="pt") as f:
+        state_dict = {k: f.get_tensor(k) for k in f.keys()}
+
+    # Adapt LoRA keys if needed (add .default if expected by the model)
+    def adapt_lora_keys(sd: dict):
+        new_sd = {}
+        prefix = "base_model." if init else "tptt_model.base_model."
+        for k, v in sd.items():
+            if not k.startswith(prefix):
+                k = prefix + k
+            new_sd[k] = v
+        return new_sd
+
+    state_dict = adapt_lora_keys(state_dict)
+    logger.info("Input LoRA keys: %s", [k for k in state_dict.keys()])
+
+    # Load into model
+    missing, unexpected = model.load_state_dict(state_dict, strict=False, assign=True)
+    missing_lora = [k for k in missing if "lora" in k]
+    if missing_lora:
+        logger.warning("Missing LoRA keys: %s", missing_lora)
+    if unexpected:
+        logger.warning("Unexpected keys: %s", unexpected)
+    return model
+
+
 def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-arguments
     model: nn.Module,
     base_config: PretrainedConfig,  # ou LlamaConfig, MistralConfig, etc.
-    liza_attention: nn.Module = LiZAttention,
-    target_modules: Optional[list[str]] = None,
     linear_cache: Optional[LCache] = None,
+    liza_attention: nn.Module = LiZAttention,
+    target_modules_names: Optional[list[str]] = None,
     operator_mode: str = "delta_rule",
     recurrent_config: Optional[Dict[str, Any]] = None,
     base_scale_attn: bool = False,
@@ -569,32 +605,28 @@ def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-a
     max_self_attn_length: Optional[int] = None,  # unnecessary
     padding_side: str = "right",  # for tokenizer
     bidirectional: bool = False,  # if True, use bidirectional attention
+    pooling_config: Optional[Dict[str, Any]] = None,
+    **kwargs,  # quickfix unexpected arguments
 ) -> Tuple[PreTrainedModel, LCache]:
     """Replace target modules in a model with LiZAttention."""
-    if recurrent_config is None:
-        operator_mode = "delta_rule"  # force default operator mode if no config
-        recurrent_config = {
-            "order": 1,
-            "gate_type": "k",
-            "linear": True,
-            "trick": "derivative",
-        }
-    if target_modules is None:
-        target_modules = ["attn", "self_attn", "attention"]
+    if target_modules_names is None:
+        target_modules_names = ["attn", "self_attn", "attention"]
     # Find target modules by suffix (e.g., "attn", "attention")
-    target_modules = [
+    target_modules_names = [
         name
         for name, _ in model.named_modules()
-        if any(name.endswith(suffix) for suffix in target_modules)
-        and not any(f".{suffix}." in name for suffix in target_modules)
+        if any(name.endswith(suffix) for suffix in target_modules_names)
+        and not any(f".{suffix}." in name for suffix in target_modules_names)
     ]
-    if not target_modules:
-        raise ValueError(f"Target modules '{target_modules}' not found in the model.")
+    if not target_modules_names:
+        raise ValueError(
+            f"Target modules '{target_modules_names}' not found in the model."
+        )
     # Prepare recurrent config
     linear_cache = linear_cache or LCache()
     # Inject LiZAttention into the model
     for name, _ in model.named_modules():
-        if name in target_modules:
+        if name in target_modules_names:
             parent = model
             *path, last = name.split(".")
             for p in path:
@@ -618,50 +650,34 @@ def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-a
                     linear_precision=linear_precision,
                     padding_side=padding_side,
                     bidirectional=bidirectional,
+                    pooling_config=pooling_config,
                 ),
             )
     return model, linear_cache
 
 
-def load_tptt_safetensors(
-    repo_or_path: str, model: PeftModel, token: Optional[str] = None
-) -> Optional[PeftModel]:
-    """Load Tptt safetensor from LoRA/PEFT weights and adapt keys if needed."""
-    fname = "adapter_model.safetensors"
-    # Find file path
-    if os.path.isdir(repo_or_path):
-        path = os.path.join(repo_or_path, fname)
-        if not os.path.exists(path):
-            return None
-    else:
-        if fname not in list_repo_files(repo_or_path, token=token):
-            return None
-        path = hf_hub_download(repo_or_path, fname, token=token)
+def save_tptt_safetensors(model, path: str, name: str = "adapter_model.safetensors"):
+    """Save trainable LoRA weights and adapting key names"""
+    # 1. Get the full state_dict
+    all_sd = model.state_dict()
 
-    # Load weights from safetensors
-    with safe_open(path, framework="pt") as f:
-        state_dict = {k: f.get_tensor(k) for k in f.keys()}
+    # 2. Identify trainable parameter names (usually only LoRA/PEFT adapters)
+    trainable_keys = [
+        name for name, param in model.named_parameters() if param.requires_grad
+    ]
 
-    # Adapt LoRA keys if needed (add .default if expected by the model)
-    def adapt_lora_keys(sd: dict):
-        new_sd = {}
-        for k, v in sd.items():
-            if (
-                k.endswith("lora_A.weight") or k.endswith("lora_B.weight")
-            ) and k.replace(".weight", ".default.weight") in model.state_dict():
-                k = k.replace(".weight", ".default.weight")
-            new_sd[k] = v
-        return new_sd
+    # 3. Filter and adapt the keys
+    to_save = {}
+    for k in trainable_keys:
+        new_key = k.replace(
+            "tptt_model.base_model.", ""
+        )  # Remove custom model encapsulation info
+        to_save[new_key] = all_sd[k]
 
-    state_dict = adapt_lora_keys(state_dict)
-    # Load into model
-    missing, unexpected = model.load_state_dict(state_dict, strict=False, assign=True)
-    missing_lora = [k for k in missing if "lora" in k]
-    if missing_lora:
-        logger.warning("Missing LoRA keys: %s", missing_lora)
-    if unexpected:
-        logger.warning("Unexpected keys: %s", unexpected)
-    return model
+    # 4. Save the filtered adapters to a safetensors file
+    if to_save:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        save_file(to_save, os.path.join(path, name))
 
 
 class TpttModel(PreTrainedModel):
@@ -684,61 +700,29 @@ class TpttModel(PreTrainedModel):
         super().__init__(config, **kwargs)
         repo_or_path = getattr(config, "_base_path", None) or config._name_or_path
 
-        if (  # Ensure attention implementation is set (change stability after training)
-            hasattr(config, "force_attn_implementation")
-            and config.force_attn_implementation is not None
-        ):
-            kwargs["attn_implementation"] = config.force_attn_implementation
-            logger.warning(
-                "Attention implementation is: %s", config.force_attn_implementation
-            )
-
-        # 1. Load backbone : support no model.safetensors with load_tptt_safetensors
-        self.backbone = AutoModelForCausalLM.from_pretrained(
+        # 1. Load backbone :
+        tptt_model = AutoModelForCausalLM.from_pretrained(
             config.base_model_name, **kwargs
         )
-        self.retie_lm_after_load(**kwargs)  # Force lm tie weights
 
         # 2. Inject LiZA attention
         self.linear_cache = LCache()
-        self.backbone, self.linear_cache = self.inject_liza_attention(
-            self.backbone, config, self.linear_cache
+        tptt_model, self.linear_cache = get_tptt_model(
+            tptt_model, config, self.linear_cache, **config.to_dict()
         )
+
         # 3. Apply LoRA if present and configured
         if config.lora_config is not None:
             lora_config_obj = LoraConfig(**config.lora_config)
-            self.backbone = get_peft_model(self.backbone, lora_config_obj)
+            tptt_model = get_peft_model(tptt_model, lora_config_obj)
             if repo_or_path:
-                self.backbone = load_tptt_safetensors(
-                    repo_or_path, self.backbone, token=kwargs.get("token", None)
+                tptt_model = load_tptt_safetensors(
+                    repo_or_path,
+                    tptt_model,
+                    token=kwargs.get("token", None),
+                    init=True,
                 )
-
-    @staticmethod
-    def inject_liza_attention(
-        backbone: PreTrainedModel,
-        config: TpttConfig,
-        linear_cache: Optional[LCache] = None,
-    ) -> PreTrainedModel:
-        """Inject LiZAttention into the specified target modules of the base model."""
-        # Inject LiZAttention (external function, not shown here)
-        backbone, linear_cache = get_tptt_model(
-            backbone,
-            base_config=backbone.config,
-            liza_attention=LiZAttention,
-            target_modules=config.target_modules_names,
-            linear_cache=linear_cache,
-            operator_mode=config.operator_mode,
-            recurrent_config=config.recurrent_config,
-            max_self_attn_length=config.max_self_attn_length,
-            base_scale_attn=config.base_scale_attn,
-            mag_weight=config.mag_weight,
-            cross_gate=config.cross_gate,
-            max_chunk_size=config.max_chunk_size,
-            linear_precision=config.linear_precision,
-            padding_side=config.padding_side,
-            bidirectional=config.bidirectional,
-        )
-        return backbone, linear_cache
+        self.tptt_model = tptt_model
 
     def forward(
         self,
@@ -747,38 +731,41 @@ class TpttModel(PreTrainedModel):
         labels: Optional[torch.LongTensor] = None,
         **kwargs,
     ):
-        """
-        Forward pass. All arguments are passed to the underlying base model.
-        """
+        """Forward pass. All arguments are passed to the underlying base model."""
         if self.training:
             kwargs["use_cache"] = False
             kwargs.pop("num_items_in_batch", None)
         elif "use_cache" not in kwargs:  # evaluation
             kwargs.pop("num_items_in_batch", None)
             kwargs["use_cache"] = False
-        return self.backbone(
+        return self.tptt_model(
             input_ids=input_ids, attention_mask=attention_mask, labels=labels, **kwargs
         )
 
     def generate(self, *args, **kwargs):
-        # Delegate the generate call to the backbone model, which supports generation
-        return self.backbone.generate(*args, **kwargs)
+        """Delegate the generate call to the backbone model, which supports generation"""
+        return self.tptt_model.generate(*args, **kwargs)
 
     def save_pretrained(self, path: str, **kwargs):
         """Save model weights, config, and source code to the given path."""
+        # 0. Save complete tptt config (with or without LoRA)
         super().save_pretrained(path, **kwargs)  # pylint: disable=no-member
-
-        # 1. Save PEFT weights and clean adapter config
-        self._save_peft_weights(path, **kwargs)
+        self._adjust_save_strategy(path, **kwargs)
+        # 1. Save true weights and adapte keys
+        save_tptt_safetensors(self, path)
         # 2. Copy Python files for trust_remote_code
         self._copy_source_files(path)
 
-    def _save_peft_weights(self, path: str, **kwargs):
-        """Save PEFT weights and remove redundant adapter config."""
-        self.backbone.save_pretrained(path, **kwargs)
-        adapter_config_path = os.path.join(path, "adapter_config.json")
-        if os.path.exists(adapter_config_path):
-            os.remove(adapter_config_path)
+    def _adjust_save_strategy(self, path: str, **kwargs):
+        """Re-adapt/remove the weight safetensor and saved adapter config"""
+        if isinstance(self.tptt_model, PeftModel):
+            self.tptt_model.save_pretrained(path, **kwargs)
+        safetensor_path = os.path.join(path, "model.safetensors")
+        if os.path.exists(safetensor_path):
+            os.remove(safetensor_path)
+        adapter_path = os.path.join(path, "adapter_config.json")
+        if os.path.exists(adapter_path):
+            os.remove(adapter_path)
 
     def _copy_source_files(self, path: str):
         """Copy all .py files from package directory for trust_remote_code."""
@@ -791,22 +778,34 @@ class TpttModel(PreTrainedModel):
 
     def retie_lm_after_load(self, **kwargs):
         """Re-link lm_head after loading external weights."""
-        embed_lm = find_embedding_lm(self.backbone)
-        if embed_lm is not None and hasattr(self.backbone, "lm_head"):
-            if self.backbone.lm_head is None:  # ensure lm_head exists
-                self.backbone.lm_head = nn.Linear(
+        embed_lm = find_embedding_lm(self.tptt_model)
+        if embed_lm is not None and hasattr(self.tptt_model, "lm_head"):
+            if self.tptt_model.lm_head is None:  # ensure lm_head exists
+                self.tptt_model.lm_head = nn.Linear(
                     embed_lm.weight.shape[1], embed_lm.weight.shape[0], bias=False
                 )
             if kwargs.get("tie_word_embeddings", True):
-                self.backbone.lm_head.weight = embed_lm.weight  # share weights
+                self.tptt_model.lm_head.weight = embed_lm.weight  # share weights
                 logger.info("Weights of lm_head have been shared with embedding.")
             else:
-                self.backbone.lm_head.weight = nn.Parameter(embed_lm.weight.clone())
+                self.tptt_model.lm_head.weight = nn.Parameter(embed_lm.weight.clone())
                 logger.info("Weights of lm_head have been cloned from the embedding.")
 
     @classmethod
-    def from_pretrained(cls, *args, **kwargs):
-        model = super().from_pretrained(*args, **kwargs)  # pylint: disable=no-member
+    def from_pretrained(cls, pretrained_model_name_or_path=None, *model_args, **kwargs):
+        """Custom from_pretrained that accepts the standard positional argument"""
+        config = kwargs.pop("config", None)
+        repo_or_path = (
+            pretrained_model_name_or_path
+            or kwargs.pop("pretrained_model_name_or_path", None)
+            or kwargs.pop("repo_or_path", None)
+            or (getattr(config, "_base_path", None) if config else None)
+            or (getattr(config, "_name_or_path", None) if config else None)
+        )
+
+        if config is None and repo_or_path is not None:
+            config = AutoConfig.from_pretrained(repo_or_path, **kwargs)
+        model = cls(config, *model_args, **kwargs)
         model.retie_lm_after_load(**kwargs)
         return model
 

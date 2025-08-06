@@ -356,6 +356,30 @@ def bidirectional_linear_attention():
     return attn
 
 
+@pytest.fixture
+def make_fake_state(keys=("a.lora_A.weight", "b.lora_B.weight")):
+    """Fake state dict for safetensors."""
+    return {k: f"tensor_{k}" for k in keys}
+
+
+@pytest.fixture
+def make_fake_model(state_keys):
+    """Return a MagicMock-like model with required API."""
+    model = MagicMock()
+    # Returns your input keys (simulate expected keys in model)
+    model.state_dict.return_value = {k: None for k in state_keys}
+
+    # load_state_dict returns lists of missing/unexpected keys
+    def load_state_dict(sd, strict, assign):
+        # Return missing all "lora" that not in state_dict, and unexpected all that don't match
+        missing = [k for k in model.state_dict() if k not in sd]
+        unexpected = [k for k in sd if k not in model.state_dict()]
+        return (missing, unexpected)
+
+    model.load_state_dict.side_effect = load_state_dict
+    return model
+
+
 @pytest.fixture(autouse=True)
 def patch_ensure_stability(monkeypatch):
     """Patch ensure_stability globally to be identity for simplicity."""

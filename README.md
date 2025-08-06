@@ -61,7 +61,7 @@ Basic usage :
 
 from transformer import AutoTokenizer, AutoModelForCausalLM
 import tptt
-from tptt import get_tptt_model, load_tptt_safetensor
+from tptt import save_tptt_safetensors, get_tptt_model, load_tptt_safetensor
 
 ##### Transforming into Titans (Tptt)
 base_model_name="meta-llama/Llama-3.2-1B"
@@ -70,6 +70,8 @@ config = tptt.TpttConfig(
     #lora_config=lora_config,
 )
 model = tptt.TpttModel(config)
+# manual local save
+save_tptt_safetensors(model, path, name)
 
 ##### Pretrained Titans from Transformer
 repo_id = "ffurfaro/Titans-Llama-3.2-1B"
@@ -77,7 +79,7 @@ model = AutoModelForCausalLM.from_pretrained(repo_id, trust_remote_code=True)
 
 ##### More custom for other Model (BERT, ViT, etc.)
 model, linear_cache = get_tptt_model(model, config) # you can activate Bidirectional
-model = load_tptt_safetensor(repo_or_path, model) # from saved LoRA only
+model = load_tptt_safetensors(repo_or_path, model) # from saved LoRA only
 
 ##### Using LinearAttention from scratch
 layers = nn.ModuleList([

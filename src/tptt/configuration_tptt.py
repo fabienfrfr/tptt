@@ -3,12 +3,15 @@
 Author : Fabien FURFARO
 """
 
+import logging
 import os
 import re
-from typing import List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import torch
 from transformers import AutoConfig, PretrainedConfig
+
+logger = logging.getLogger(__name__)  # monitoring
 
 
 def convert_sets_to_lists(obj):
@@ -86,7 +89,6 @@ class TpttConfig(PretrainedConfig):
         base_model_name: str = "meta-llama/Llama-3.2-1B",
         name_or_path: Optional[str] = None,
         target_modules_names: Optional[List[str]] = None,
-        force_attn_implementation: Optional[str] = "eager",
         operator_mode: str = "delta_rule",
         max_self_attn_length: Optional[
             int
@@ -99,6 +101,7 @@ class TpttConfig(PretrainedConfig):
         lora_config: Optional[dict] = None,  # only serialized accepted
         padding_side: Optional[str] = None,  # for tokenizer, default "right"
         bidirectional: bool = False,  # if True, use bidirectional attention
+        pooling_config: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
         # If base_model_config is provided, load it and merge with this config
@@ -129,7 +132,6 @@ class TpttConfig(PretrainedConfig):
             "self_attn",
             "attention",
         ]
-        self.force_attn_implementation = force_attn_implementation
         self.operator_mode = operator_mode
         self.base_scale_attn = base_scale_attn
         self.mag_weight = mag_weight
@@ -151,6 +153,7 @@ class TpttConfig(PretrainedConfig):
         self.bidirectional = bidirectional
         if self.bidirectional:
             print("Bidirectional is enabled, need to be uncausal and unpadded.")
+        self.pooling_config = pooling_config
 
         super().__init__(**kwargs)  # flush unconsistend pretrained parameters (?)
         # Copy class attributes to instance for serialization (save dict)
@@ -160,13 +163,13 @@ class TpttConfig(PretrainedConfig):
         # Padding side configuration if not set
         if self.padding_side is None:
             self.padding_side = "right"
-            print("Warning: padding_side is None, defaulting to 'right'.")
+            logger.info("Warning: padding_side is None, defaulting to 'right'.")
         # set recurrent configuration from operator mode
         if operator_mode not in self.__class__.RECURRENT_MODES:
             self.recurrent_config = parse_mode_name(operator_mode)
         else:
             self.recurrent_config = self.__class__.RECURRENT_MODES[operator_mode]
-        print(f"Using recurrent mode: {get_mode_name(**self.recurrent_config)}")
+        logger.info("Using recurrent mode: %s", get_mode_name(**self.recurrent_config))
 
 
 TpttConfig.register_for_auto_class()
