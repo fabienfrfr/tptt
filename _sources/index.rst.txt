@@ -13,7 +13,7 @@ TPTT Documentation
 .. _PyPI: https://pypi.org/project/tptt/
 
 .. |Release| image:: https://img.shields.io/github/v/release/fabienfrfr/tptt?color=brightgreen
-.. _Release: https://github.com/fabienfrfr/tptt/releases
+.. _Release: https://github.com/fabienfrfr/tptt/
 
 .. |Documentation| image:: https://img.shields.io/badge/docs-online-blue
 .. _Documentation: https://fabienfrfr.github.io/tptt/
