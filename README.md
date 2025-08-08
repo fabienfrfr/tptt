@@ -59,15 +59,20 @@ Basic usage :
 
 ```python
 
-from transformer import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
 import tptt
-from tptt import save_tptt_safetensors, get_tptt_model, load_tptt_safetensor
+from tptt import save_tptt_safetensors, get_tptt_model, load_tptt_safetensors
+from torch import nn
 
 ##### Transforming into Titans (Tptt)
-base_model_name="meta-llama/Llama-3.2-1B"
-config = tptt.TpttConfig(
-    base_model_name=base_model_name,
+base_model_path = "Qwen/Qwen2.5-1.5B"
+base_config = AutoConfig.from_pretrained(base_model_path)
+base_model_name = "Qwen/Qwen2.5-1.5B"
+tptt_config = tptt.TpttConfig(
+    base_model_config=base_config,
+    base_model_name= base_model_name, 
     #lora_config=lora_config,
+
 )
 model = tptt.TpttModel(config)
 # manual local save
