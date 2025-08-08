@@ -6,7 +6,7 @@ from .configuration_tptt import (TpttConfig, generate_model_card,
                                  parse_mode_name)
 from .modeling_tptt import (LCache, LinearAttention, LinearAttentionOp,
                             LiZAttention, TpttModel, get_tptt_model,
-                            load_tptt_safetensors)
+                            load_tptt_safetensors, save_tptt_safetensors)
 from .train_tptt import LiZACallback, SaveBestModelCallback
 
 __all__ = [
@@ -22,4 +22,5 @@ __all__ = [
     "LinearAttention",
     "parse_mode_name",
     "load_tptt_safetensors",
+    "save_tptt_safetensors",
 ]
