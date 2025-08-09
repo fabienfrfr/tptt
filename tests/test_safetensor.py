@@ -14,7 +14,7 @@ MODULE = "src.tptt.modeling_tptt"  # for patch
     [
         ([False, False], []),
         ([True, False], ["base.weight", "base.bias"]),
-        # ([False, True],  ["A.B.weight", "A.B.bias"],),
+        # ([False, True],  ["A.B.weight", "A.B.bias"],), # old
     ],
 )
 def test_save_tptt_safetensor_peft(
@@ -66,11 +66,29 @@ def test_save_tptt_safetensor_peft(
     "model_keys, fake_sd, expect_missing, expect_unexpected",
     [
         # 1. Warning ONLY missing_lora
-        # (["a.lora_A.default.weight", "foo"], {"foo": "bar"}, True, False),
+        (
+            ["a.lora_A.default.weight", "foo"],
+            {"foo": torch.tensor([0.0], dtype=torch.float32)},
+            True,
+            False,
+        ),
         # 2. Warning ONLY unexpected
-        (["foo"], {"foo": "bar", "surprise": "baz"}, False, True),
+        (
+            ["foo"],
+            {
+                "foo": torch.tensor([0.0], dtype=torch.float32),
+                "surprise": torch.tensor([0.0], dtype=torch.float32),
+            },
+            False,
+            True,
+        ),
         # 3. Warning on both
-        (["a.lora_A.default.weight"], {"surprise": "baz"}, True, True),
+        (
+            ["a.lora_A.default.weight"],
+            {"surprise": torch.tensor([0.0], dtype=torch.float32)},
+            True,
+            True,
+        ),
     ],
 )
 def test_load_tptt_safetensors_warn_branches(
@@ -79,9 +97,11 @@ def test_load_tptt_safetensors_warn_branches(
     """Test that logger.warning triggers for missing_lora and/or unexpected keys as needed."""
 
     def make_fake_model(state_keys):
-        """make faker"""
         model = MagicMock()
-        model.state_dict.return_value = {k: None for k in state_keys}
+        fake_state_dict = {
+            k: torch.tensor([0.0], dtype=torch.float32) for k in state_keys
+        }
+        model.state_dict.return_value = fake_state_dict
 
         def load_state_dict(sd, strict, assign):
             missing = [k for k in model.state_dict() if k not in sd]
@@ -93,13 +113,18 @@ def test_load_tptt_safetensors_warn_branches(
 
     model = make_fake_model(model_keys)
 
-    monkeypatch.setattr(f"{MODULE}.os.path.isdir", lambda x: True)
-    monkeypatch.setattr(f"{MODULE}.os.path.exists", lambda x: True)
-    monkeypatch.setattr(f"{MODULE}.os.path.join", lambda a, b: f"{a}/{b}")
+    monkeypatch.setattr(f"{MODULE}.os.path.isdir", lambda *args, **kwargs: True)
+    monkeypatch.setattr(f"{MODULE}.os.path.exists", lambda *args, **kwargs: True)
+    monkeypatch.setattr(f"{MODULE}.os.path.join", lambda *args: "/".join(args))
 
     safe_open_ctx = MagicMock()
     safe_open_ctx.__enter__.return_value.keys.return_value = list(fake_sd)
-    safe_open_ctx.__enter__.return_value.get_tensor.side_effect = lambda k: fake_sd[k]
+    # Ensure get_tensor always returns a torch.Tensor, fallback safe_tensor if needed
+    safe_open_ctx.__enter__.return_value.get_tensor.side_effect = lambda k: (
+        fake_sd[k]
+        if isinstance(fake_sd[k], torch.Tensor)
+        else torch.tensor([0.0], dtype=torch.float32)
+    )
     monkeypatch.setattr(f"{MODULE}.safe_open", MagicMock(return_value=safe_open_ctx))
 
     logger_mock = MagicMock()
@@ -107,7 +132,6 @@ def test_load_tptt_safetensors_warn_branches(
 
     load_tptt_safetensors("/fakepath", model)
 
-    # Check warnings
     calls = [c[0][0] for c in logger_mock.warning.call_args_list]
-    assert ("Missing LoRA keys" in "".join(calls)) is expect_missing
+    assert ("Missing keys" in "".join(calls)) is expect_missing
     assert ("Unexpected keys" in "".join(calls)) is expect_unexpected

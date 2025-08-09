@@ -13,6 +13,9 @@
     <a href="https://fabienfrfr.github.io/tptt/">
         <img alt="Documentation" src="https://img.shields.io/badge/docs-online-blue">
     </a>
+    <a href="https://huggingface.co/ffurfaro">
+        <img alt="HuggingFace" src="https://img.shields.io/badge/hf-ffurfaro-yellow">
+    </a>
 </p>
 
 <h3 align="center">
@@ -46,7 +49,7 @@ pip install tptt
 
 #### *Titanesque Documentation*
 
-- [TPTT-LiZA Training](./docs/liza-training.md):  
+- [TPTT-LiZA_Training](./docs/liza-training.md):  
   Instructions for training TPTT-based models with LoRA and advanced memory management.
 
 - [TPTT_LiZA_Evaluation](./docs/liza-evaluate.md):  

@@ -24,7 +24,10 @@
 
 % ------------------------------------------------------------------------
 % Style Reminder: Keep every sentence in abstracts and main text neutral, humble, and scientific.
-% For each sentence, check for "marketing" tone (e.g., overuse of words like "novel", "substantial", "robust")
+
+% Write in ENGLISH only
+
+% For each sentence, check for "marketing" tone (e.g., overuse of words like "novel", "substantial", "robust") or subjective point of view (e.g., "traditionnal", "essential")
 % and replace with more cautious, evidence-based claims.
 %
 % Prefer:
@@ -32,6 +35,9 @@
 % - "To the best of our knowledge...", "Preliminary experiments suggest...", 
 %   "Further investigation is needed...", "This approach may be of interest..."
 %
+
+% Apply rules : Less is More 
+
 % Avoid:
 % - "groundbreaking", "revolutionary", "unprecedented", "definitively demonstrates",
 %   overly strong claims without empirical or theoretical backing
@@ -39,7 +45,7 @@
 % Make explicit:
 % - Limitations, resource constraints, preliminary or ongoing nature of results,
 %   encouragement for community replication and extension.
-%
+
 % Example sentences:
 % - "We propose a novel architecture..." → "We propose an alternative architecture..."
 % - "Substantially improves..." → "Shows promising results..." / "May improve..."
@@ -53,17 +59,17 @@
 \begin{document}
 
 \maketitle
-
+    
 \begin{abstract}
-    \textbf{Background:} Large language models (LLMs) based on the Transformer architecture have achieved remarkable success in natural language processing, but their computational and memory demands remain a significant challenge, especially for long-context inference. 
-    
-    \textbf{Methods:} We propose TPTT (Transforming Pretrained Transformers into Titans), a novel framework that augments pretrained Transformer models with efficient linearized attention mechanisms and advanced memory management. TPTT introduces techniques such as Memory as Gate (MaG) and mixed linearized attention (LiZA), and is fully compatible with the Hugging Face Transformers library, enabling parameter-efficient fine-tuning (LoRA) without full retraining.
-    
-    \textbf{Results:} Experiments on the MMLU benchmark with $\sim$1B parameter models demonstrate substantial improvements in both efficiency and accuracy. For instance, Titans-Llama-3.2-1B achieves a 20\% increase in Exact Match (EM) over its baseline.
-    
-    \textbf{Conclusions:} TPTT enables scalable, robust adaptation of existing LLMs to long-context tasks, outperforming recent state-of-the-art methods in both performance and resource utilization. Source code and package are available at \url{https://github.com/fabienfrfr/tptt} and \url{https://pypi.org/project/tptt/}.
+    \textbf{Background:} Transformer-based large language models (LLMs) have shown capabilities across various natural language processing tasks. However, their quadratic computational and memory complexity, especially in self-attention, challenges efficient inference on long contexts and deployment in limited-resource environments.
+
+    \textbf{Methods:} We introduce TPTT (Transforming Pretrained Transformers into Titans), a framework that augments pretrained Transformers with linearized attention and internal memory gating via Memory as Gate (MaG), without full retraining. TPTT supports parameter-efficient fine-tuning (LoRA) and integrates with standard libraries like Hugging Face Transformers.
+
+    \textbf{Results:} Experiments on pretrained models of about 1 billion parameters, primarily on the MMLU benchmark, suggest improvements in both efficiency and accuracy over baselines. For instance, Titans-Llama-3.2-1B shows up to 20\% relative gain in Exact Match scores in one-shot evaluation. Training uses modest computational resources, supporting practical applicability.
+
+    \textbf{Conclusions:} These preliminary results indicate that TPTT may aid adaptation of pretrained LLMs to long-context tasks with limited overhead. Further evaluation on larger models and diverse benchmarks is needed to assess generality. Source code and package are available at \url{https://github.com/fabienfrfr/tptt} and \url{https://pypi.org/project/tptt/}.
 \end{abstract}
-    
+
 
 
 \begin{figure}[ht]
@@ -82,7 +88,7 @@ Recent research has sought to address these challenges through a variety of appr
 
 Despite these advances, most existing solutions require substantial architectural changes or retraining from scratch, limiting their applicability to already deployed or proprietary models. There remains a need for methods that can efficiently endow existing LLMs with long-context and memory-augmented capabilities, while preserving their pretrained knowledge and minimizing adaptation cost.
 
-\textbf{In this paper, we introduce TPTT (Transforming Pretrained Transformers into Titans), a practical and scalable framework for upgrading pretrained Transformers with efficient linearized attention and advanced memory mechanisms.} Our approach integrates techniques such as Memory as Gate (MaG) and mixed linearized attention (LiZA), inspired by recent advances in memory-augmented neural architectures~\cite{behrouz2024titans}. TPTT is fully compatible with the Hugging Face Transformers library and leverages parameter-efficient fine-tuning (LoRA), enabling seamless adaptation of any causal LLM to long-context tasks.
+\textbf{In this paper}, we introduce TPTT (Transforming Pretrained Transformers into Titans), a practical and scalable framework for upgrading pretrained Transformers with efficient linearized attention and advanced memory mechanisms. Our approach integrates techniques such as Memory as Gate (MaG) and mixed linearized attention (LiZA), inspired by recent advances in memory-augmented neural architectures~\cite{behrouz2024titans}. TPTT is fully compatible with the Hugging Face Transformers library and leverages parameter-efficient fine-tuning (LoRA), enabling seamless adaptation of any causal LLM to long-context tasks.
 
 
 \textbf{Our main contributions are:}
@@ -105,7 +111,7 @@ The computational and memory challenges of Transformer models have motivated a r
 Methods such as FlashAttention~\cite{dao2023flashattention} and Mamba~\cite{gu2023mamba} optimize the implementation of the standard attention mechanism to reduce memory footprint and improve throughput, often via kernel fusion, tiling, or custom CUDA kernels. While these approaches accelerate inference and training, they do not fundamentally alter the quadratic complexity with respect to sequence length.
 
 \paragraph{Linearized and Approximated Attention}  
-To address the quadratic bottleneck, various linear attention variants have been proposed. Linformer~\cite{wang2020linformer} approximates attention by low-rank projections, Performer~\cite{choromanski2021rethinking} uses random feature maps to linearize the softmax kernel, and LoLCat~\cite{zhang2024lolcats} and Liger~\cite{lan2025liger} further explore kernel-based and structural approximations. However, these methods often require retraining from scratch or significant architectural modifications, limiting their applicability to pretrained models. Notably, Liger exploits similar properties to those leveraged in this work, but does not rely on explicit linearization injection.
+To address the quadratic bottleneck, various linear attention variants have been proposed. Linformer~\cite{wang2020linformer} approximates attention by low-rank projections, Performer~\cite{choromanski2021rethinking} uses random feature maps to linearize the softmax kernel, and LoLCat~\cite{zhang2024lolcats} and Liger~\cite{lan2025liger} further explore kernel-based and structural approximations. However, these methods often require retraining from scratch or significant architectural modifications, limiting their applicability to pretrained models. Notably, Liger exploits similar properties to those leveraged in this work, but does not rely on explicit linearization injection (and use only less expressive Gated Linear Attention ~\cite{gla} then DeltaProduct (this work) but more fast).
 
 \paragraph{Recurrent and Memory-Augmented Architectures}  
 Alternative designs such as RWKV~\cite{chen2023rwkv} and Titans~\cite{behrouz2024titans} introduce recurrent or memory-augmented components to capture long-range dependencies efficiently. DeltaProduct~\cite{siems2025deltaproduct} extends this idea by leveraging products of Householder transformations to enhance expressivity while maintaining stability. These architectures demonstrate promising results but typically require training models from the ground up.
@@ -142,7 +148,17 @@ In linear attention, the softmax kernel is approximated by a feature mapping $\p
 \phi(\mathbf{q}_t)^\top \left( \sum_{i=1}^t \phi(\mathbf{k}_i) \beta_i \right)} 
 = \frac{\phi(\mathbf{q}_t)^\top S_t}{\phi(\mathbf{q}_t)^\top z_t}
 \end{equation}
-where $\mathbf{q}_t$, $\mathbf{k}_i$, and $\mathbf{v}_i$ are the query, key, and value vectors at positions $t$ and $i$, respectively, and $\beta_i$ is a gating scalar or vector modulating the keys and values. Here, $\beta_i$ is applied multiplicatively after the feature mapping $\phi$, which itself can be an ELU-based or kernel approximation function~\cite{wang2020linformer}. In this work, $\beta_i$ is constructed via average pooling over the keys and values, which helps stabilize the scaling of the attention scores over long sequences.
+where $\mathbf{q}_t$, $\mathbf{k}_i$, and $\mathbf{v}_i$ are the query, key, and value vectors at positions $t$ and $i$, respectively, and $\beta_i$ is a gating scalar or vector modulating the keys and values. Here, $\beta_i$ is applied multiplicatively after the feature mapping $\phi$, which itself can be an ELU-based or kernel approximation function~\cite{wang2020linformer}. 
+
+In this work, $\beta_i$ is constructed via causal average pooling over the keys and values, which helps stabilize the scaling of the attention scores over long sequences. And we apply apply SiLU normalized in Q,K,V, RMSnorm for output and sigmoid for beta. % explicit calculus in this part (see the true implementation)
+
+\begin{align}
+    \mathbf{X} &\leftarrow \phi(\mathbf{S}_{[t,\,t+C-1]}) \\
+    \mathbf{\beta} &\leftarrow \phi(\mathbf{S}_{[t,\,t+C-1]}) \\
+    \mathbf{Y} &\leftarrow \phi(\mathbf{S}_{[t,\,t+C-1]})
+\end{align}
+
+Where $X$ is Q,K,V.
 
 % Note: It would be beneficial to include a brief discussion or figure illustrating how $\phi$ approximates the softmax kernel and the role of $\beta_i$ in modulating attention weights.
 
@@ -173,32 +189,42 @@ where $\alpha \in [0,1]$ is a learnable parameter adapted during training and $\
 
 We leverage the \textbf{DeltaProduct} operator as the feature mapping $\phi$ within the linear attention framework, generalizing the classical Delta rule to increase expressivity while preserving efficient parallel computation. DeltaProduct addresses the expressivity bottleneck found in linear recurrent architectures that rely on diagonal or diagonal-plus-rank-1 state transitions by employing a product of multiple generalized Householder transformations per token~\cite{siems2025deltaproduct}. This structure also ensures numerical stability due to the orthogonality properties of Householder matrices.
 
+\subsubsection{Delta Rule Formulation}
+
+
 \paragraph{Sequential Delta Rule.}
 
 The classical Delta rule for associative memory updates the state matrix $\mathbf{S}_t \in \mathbb{R}^{d \times d}$ at time $t$ as:
-\begin{equation}
-    \mathbf{S}_t = \mathbf{S}_{t-1} + \beta_t \left( \mathbf{v}_t - \mathbf{S}_{t-1} \mathbf{k}_t \right) \mathbf{k}_t^\top
+\begin{align}
+    \mathbf{S}_t &= \mathbf{S}_{t-1} \left(\mathbf{I}  - \beta_t \mathbf{k}_t  \mathbf{k}_t^\top \right) + \beta_t \mathbf{v}_t \mathbf{k}_t^\top \\
+    &= \mathbf{S}_{t-1} + \beta_t \left( \mathbf{v}_t - \mathbf{S}_{t-1} \mathbf{k}_t \right) \mathbf{k}_t^\top
     \label{eq:deltarule}
-\end{equation}
+\end{align}
 where $\mathbf{k}_t, \mathbf{v}_t \in \mathbb{R}^d$ are the key and value vectors, and $\beta_t$ is a gating scalar. This update is inherently sequential and thus not well-suited for parallel hardware acceleration.
+
+\paragraph{Expanded recursive form.}
+
+Expanding the recursion, the state $\mathbf{S}_t$ can be expressed as the cumulative effect of all past updates modulated by subsequent corrections, i.e.,
+\begin{equation}
+    \mathbf{S}_t = \sum_{i=1}^t \beta_i \mathbf{v}_i \mathbf{k}_i^\top \prod_{j=i+1}^t \left( \mathbf{I} - \beta_j \mathbf{k}_j \mathbf{k}_j^\top \right),
+\end{equation}
+which highlights how each rank-1 update is successively transformed by the multiplicative decay terms from later steps.
 
 \paragraph{Chunkwise Parallelization.}
 
 To enable parallel computation, the input sequence is partitioned into chunks of size $C$. The update within each chunk is computed in parallel as~\cite{yang2024parallelizing}:
-\begin{equation}
-    \mathbf{S}_{[t,\,t+C-1]} = \mathbf{S}_{t-1} + \mathbf{K}^\top
-    \mathbf{T}^{-1}
-    \left( \mathbf{V} \odot \boldsymbol{\beta} - (\mathbf{K} \odot \boldsymbol{\beta}) \mathbf{S}_{t-1} \right)
-    \label{eq:chunk-deltanet}
-\end{equation}
-where $\mathbf{K}, \mathbf{V} \in \mathbb{R}^{C \times d}$ are stacked keys and values for the chunk, $\boldsymbol{\beta} \in \mathbb{R}^{C \times 1}$ is the gating vector, $\odot$ denotes elementwise multiplication, and
-\begin{equation}
-    \mathbf{T} = \mathbf{I} - \mathrm{tril}\left((\mathbf{K} \odot \boldsymbol{\beta}) \mathbf{K}^\top, -1\right)
-    \label{eq:triangular}
-\end{equation}
-with $\mathrm{tril}(\cdot, -1)$ extracting the strictly lower triangular part. This formulation enables efficient batched computation by restricting dependencies within chunks.
+\begin{align}
+    \mathbf{S}_{[t,\,t+C-1]} &= \mathbf{S}_{t-1} + \mathbf{K}^\top \mathbf{Y} \\
+    \mathbf{Y} &= \mathbf{T}^{-1} \mathbf{R} \\
+    \mathbf{R} &= \mathbf{V} \odot \boldsymbol{\beta} - (\mathbf{K} \odot \boldsymbol{\beta}) \mathbf{S}_{t-1} \\ 
+    \mathbf{T} &= \mathbf{I} - \mathrm{tril}\left((\mathbf{K} \odot \boldsymbol{\beta}) \mathbf{K}^\top, -1\right)
+\end{align}
+where $\mathbf{K}, \mathbf{V} \in \mathbb{R}^{C \times d}$ are stacked keys and values for the chunk, $\boldsymbol{\beta} \in \mathbb{R}^{C \times 1}$ is the gating vector, $\odot$ denotes elementwise multiplication, and with $\mathrm{tril}(\cdot, -1)$ extracting the strictly lower triangular part. This formulation enables efficient batched computation by restricting dependencies within chunks.
 
 % Suggest expanding on how this chunkwise formulation balances parallelism and the need to preserve sequential dependencies.
+
+\subsubsection{Delta Product}
+
 
 \paragraph{DeltaProduct: Higher-Order Parallel State Updates.}
 
@@ -211,49 +237,21 @@ with $\mathbf{H}_{i, 0} = \mathbf{H}_{i-1}$ and $\mathbf{H}_{i, n_h} = \mathbf{H
 
 % Suggest clarifying whether these projections share parameters across $j$ or tokens, and their impact on model capacity.
 
-\paragraph{Virtual Token Expansion: Motivation and Formulation.}
+\paragraph{Expanded recursive form.}
 
-To enable multiple Householder updates per token in parallel, each real token $\mathbf{x}_t \in \mathbb{R}^D$ is expanded into $n_h$ virtual tokens using strategies designed to enrich expressivity while maintaining numerical stability.
+By unrolling the recursive updates over the internal steps \(j = 1, \ldots, n_h\) for token \(i\), the state \(\mathbf{H}_i\) can be equivalently expressed as:
 
-\begin{itemize}
-    \item \textbf{Derivative trick (finite difference):}  
-    This expansion approximates discrete derivatives to capture local sequential variations and higher-order dependencies:
-    \begin{equation}
-        \mathbf{x}_t^{(m)} = \frac{1}{Z_m} \sum_{k=0}^m (-1)^k \binom{m}{k} \mathbf{x}_{t-k}, \quad m=0,\ldots,n_h-1
-    \end{equation}
-    where $Z_m = \sum_{k=0}^m \left|(-1)^k \binom{m}{k}\right|$ normalizes the scale.
+\begin{equation}
+\mathbf{H}_i = \prod_{j=1}^{n_h} \left(\mathbf{I} - \beta_{i,j} \mathbf{k}_{i,j} \mathbf{k}_{i,j}^\top \right) \mathbf{H}_{i-1} 
++ \sum_{j=1}^{n_h} \left( \beta_{i,j} \mathbf{k}_{i,j} \mathbf{v}_{i,j}^\top \prod_{\ell = j+1}^{n_h} \left(\mathbf{I} - \beta_{i,\ell} \mathbf{k}_{i,\ell} \mathbf{k}_{i,\ell}^\top \right) \right)
+\end{equation}
 
-    \item \textbf{Rotative trick (feature-wise rotation):}  
-    Inspired by rotary embeddings, this applies phase rotations to pairs of features, enriching the representation with diverse phase information:
-    \begin{align}
-        D &= 2P + r, \quad r \in \{0,1\} \\
-        \theta_m &= \frac{2\pi m}{n_h}, \quad m=0,\ldots,n_h-1 \\
-        \begin{pmatrix}
-            x_{t,2p-2}^{(m)} \\
-            x_{t,2p-1}^{(m)}
-        \end{pmatrix}
-        &=
-        \begin{pmatrix}
-            \cos\theta_m & -\sin\theta_m \\
-            \sin\theta_m & \cos\theta_m
-        \end{pmatrix}
-        \begin{pmatrix}
-            x_{t,2p-2} \\
-            x_{t,2p-1}
-        \end{pmatrix}, \quad p=1,\ldots,P \\
-        \text{If } r=1, &\quad x_{t,D-1}^{(m)} = x_{t,D-1}
-    \end{align}
-
-    \item \textbf{Combined:}  
-    The average of derivative and rotative expansions to leverage complementary benefits:
-    \begin{equation}
-        \mathbf{x}_t^{(m)} = \frac{1}{2} \left( \mathbf{x}_{t,\mathrm{deriv}}^{(m)} + \mathbf{x}_{t,\mathrm{rot}}^{(m)} \right)
-    \end{equation}
-\end{itemize}
-
-This expansion is applied independently to each input sequence $\mathbf{Q}$, $\mathbf{K}$, $\mathbf{V}$, and $\boldsymbol{\beta}$, resulting in $N = n_h C$ virtual tokens per chunk.
-
-% Suggest including a diagram illustrating the virtual token expansion and its effect on the input representation.
+where:
+- The product \(\prod_{j=1}^{n_h} (\cdot)\) denotes the ordered matrix product (applied from right to left).
+- The first term corresponds to the state transition matrix obtained by chaining \(n_h\) generalized Householder reflections applied to the previous token’s state \(\mathbf{H}_{i-1}\).
+- The second term sums the rank-1 corrections given by the values \(\mathbf{v}_{i,j}\), each transformed by subsequent Householder matrices.
+  
+This expansion reveals that DeltaProduct’s transition matrix is a product of \(n_h\) such transformations, interpolating between simple DeltaNet (where \(n_h=1\)) and richer, more expressive state transitions. It explicitly encodes how multiple gradient steps per token compose to update the memory state.
 
 \paragraph{Chunkwise DeltaProduct Update.}
 
@@ -268,6 +266,26 @@ For a chunk of $C$ real tokens (expanded to $N = n_h C$ virtual tokens), the par
 where $\mathbf{K}_n, \mathbf{V}_n \in \mathbb{R}^{N \times d}$ and $\boldsymbol{\beta}_n \in \mathbb{R}^{N \times 1}$ are the keys, values, and gates for all virtual tokens in the chunk, and $\mathbf{S}_{\mathrm{in}}$ is the initial state for the chunk (typically the last state of the previous chunk).
 
 % It would be helpful to discuss computational considerations for inverting $\mathbf{T}_n$ when $N$ is large and possible approximations.
+
+
+\paragraph{Virtual Token Expansion: Motivation and Formulation.}
+
+To enable multiple Householder updates per token in parallel, each real token $\mathbf{x}_t \in \mathbb{R}^D$ is expanded into $n_h$ virtual tokens using strategies designed to enrich expressivity while maintaining numerical stability. We have two types of transformations:
+
+\begin{equation}
+    \text{Derivative trick:} \quad \mathbf{x}_{t,\mathrm{deriv}}^{(m)} = \frac{1}{Z_m} \sum_{k=0}^m (-1)^k \binom{m}{k} \mathbf{x}_{t-k}, \quad m=0,\ldots,n_h - 1,
+    \label{eq:derivative-trick}
+\end{equation}
+
+\begin{equation}
+    \text{Rotary trick:} \quad \mathbf{x}_{t,\mathrm{rot}}^{(m)} = \mathbf{R}(\theta_m) \mathbf{x}_t, \quad \text{with} \quad \theta_m = \frac{2\pi m}{n_h},
+    \label{eq:rotative-trick}
+\end{equation}
+
+where $\mathbf{R}(\theta_m)$ applies a phase rotation of angle $\theta_m$ to consecutive pairs of features of $\mathbf{x}_t$, and $Z_m$ normalizes the scale. This expansion is applied independently to each input sequence $\mathbf{Q}$, $\mathbf{K}$, $\mathbf{V}$, and $\boldsymbol{\beta}$, resulting in $N = n_h C$ virtual tokens per chunk.
+
+% Suggest including a diagram illustrating the virtual token expansion and its effect on the input representation.
+
 
 \paragraph{Nonlinearity.}
 

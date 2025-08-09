@@ -9,6 +9,7 @@ TPTT : Transforming Pretrained Transformers into Titans (https://arxiv.org/abs/2
 import logging
 import math
 import os
+from pathlib import Path
 import re
 import shutil
 from functools import partial
@@ -23,8 +24,7 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 from torch import nn
 from torch.utils.checkpoint import checkpoint
-from transformers import (AutoConfig, AutoModelForCausalLM, DynamicCache,
-                          PreTrainedModel)
+from transformers import AutoConfig, AutoModelForCausalLM, DynamicCache, PreTrainedModel
 from transformers.configuration_utils import PretrainedConfig
 
 from .configuration_tptt import TpttConfig
@@ -546,44 +546,76 @@ class LiZAttention(nn.Module):
 
 def load_tptt_safetensors(
     repo_or_path: str,
-    model: PeftModel,
+    model: Union[PreTrainedModel, PeftModel],
+    subfolder: Optional[str] = None,
     token: Optional[str] = None,
-    init: bool = False,
-) -> Optional[PeftModel]:
+) -> Union[PreTrainedModel, PeftModel]:
     """Load Tptt safetensor from LoRA/PEFT weights and adapt keys if needed."""
+    # sharding not supported yet (e.g. : -00001-of-00005.safetensors, ...)
     fname = "adapter_model.safetensors"
+    # subfolder management
+    if subfolder:
+        repo_or_path_norm = os.path.normpath(repo_or_path)
+        subfolder_norm = os.path.normpath(subfolder)
+        if not repo_or_path_norm.endswith(subfolder_norm):
+            fname = f"{subfolder}/{fname}" if subfolder else fname
     # Find file path
     if os.path.isdir(repo_or_path):
         path = os.path.join(repo_or_path, fname)
         if not os.path.exists(path):
-            return None
+            return model
     else:
         if fname not in list_repo_files(repo_or_path, token=token):
-            return None
+            return model
         path = hf_hub_download(repo_or_path, fname, token=token)
 
     # Load weights from safetensors
     with safe_open(path, framework="pt") as f:
         state_dict = {k: f.get_tensor(k) for k in f.keys()}
 
-    # Adapt LoRA keys if needed (add .default if expected by the model)
-    def adapt_lora_keys(sd: dict):
-        new_sd = {}
-        prefix = "base_model." if init else "tptt_model.base_model."
-        for k, v in sd.items():
-            if not k.startswith(prefix):
-                k = prefix + k
-            new_sd[k] = v
-        return new_sd
+    # Adapt LoRA/Specific keys if needed (add .default if expected by the model)
+    def adapt_keys(sd, model):
+        model_keys = list(model.state_dict().keys())
+        if any(k.startswith("tptt_model.base_model.") for k in model_keys):
+            prefix = "tptt_model.base_model."
+        elif any(k.startswith("base_model.") for k in model_keys):
+            prefix = "base_model."
+        else:
+            prefix = ""
 
-    state_dict = adapt_lora_keys(state_dict)
-    logger.info("Input LoRA keys: %s", [k for k in state_dict.keys()])
+        has_base_attn = any(".base_attn." in k for k in model_keys)
+
+        def adapt_key(k):
+            k_ = k if k.startswith(prefix) else prefix + k
+            # first, verify and modify base_attn (LiZA)
+            if ".base_attn." in k_ and not has_base_attn:
+                k_ = k_.replace(".base_attn.", ".")
+            # change LoRA if needed
+            if (
+                k_.endswith("lora_A.weight") or k_.endswith("lora_B.weight")
+            ) and k_.replace(".weight", ".default.weight") in model_keys:
+                k_ = k_.replace(".weight", ".default.weight")
+            return k_
+
+        return {adapt_key(k): v for k, v in sd.items()}
+
+    state_dict = adapt_keys(state_dict, model)
+
+    # Cast tensors to the expected dtype of the model parameters
+    model_state_dict = model.state_dict()
+    for k, v in state_dict.items():
+        if k in model_state_dict:
+            expected_dtype = model_state_dict[k].dtype
+            if v.dtype != expected_dtype:
+                state_dict[k] = v.to(expected_dtype)
+
+    logger.info("Input LoRA/Specific keys: %s", [k for k in state_dict.keys()])
 
     # Load into model
     missing, unexpected = model.load_state_dict(state_dict, strict=False, assign=True)
     missing_lora = [k for k in missing if "lora" in k]
     if missing_lora:
-        logger.warning("Missing LoRA keys: %s", missing_lora)
+        logger.warning("Missing keys: %s", missing_lora)
     if unexpected:
         logger.warning("Unexpected keys: %s", unexpected)
     return model
@@ -657,26 +689,25 @@ def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-a
 
 
 def save_tptt_safetensors(model, path: str, name: str = "adapter_model.safetensors"):
-    """Save trainable LoRA weights and adapting key names"""
+    """Save trainable LoRA/Specific weights and adapting key names"""
     # 1. Get the full state_dict
     all_sd = model.state_dict()
 
     # 2. Identify trainable parameter names (usually only LoRA/PEFT adapters)
     trainable_keys = [
         name for name, param in model.named_parameters() if param.requires_grad
-    ]
+    ]  # Also, you can manually select specific keys in model after load
 
-    # 3. Filter and adapt the keys
-    to_save = {}
-    for k in trainable_keys:
-        new_key = k.replace(
-            "tptt_model.base_model.", ""
-        )  # Remove custom model encapsulation info
-        to_save[new_key] = all_sd[k]
+    # 3. Filter and adapt the keys (Remove custom model encapsulation info)
+    to_save = {
+        k.replace("tptt_model.", "").replace("base_model.", ""): all_sd[k]
+        for k in trainable_keys
+    }
 
     # 4. Save the filtered adapters to a safetensors file
     if to_save:
         os.makedirs(os.path.dirname(path), exist_ok=True)
+        # sharding not supported yet (e.g. : -00001-of-00005.safetensors, ...)
         save_file(to_save, os.path.join(path, name))
 
 
@@ -700,9 +731,14 @@ class TpttModel(PreTrainedModel):
         super().__init__(config, **kwargs)
         repo_or_path = getattr(config, "_base_path", None) or config._name_or_path
 
-        # 1. Load backbone :
+        # 1. Load backbone (with subfolder management) :
+        kwargs_bb = kwargs.copy()
+        if config.base_model_subfolder is not None:
+            kwargs_bb["subfolder"] = config.base_model_subfolder
+        else:
+            kwargs_bb.pop("subfolder", None)
         tptt_model = AutoModelForCausalLM.from_pretrained(
-            config.base_model_name, **kwargs
+            config.base_model_name, **kwargs_bb
         )
 
         # 2. Inject LiZA attention
@@ -711,17 +747,21 @@ class TpttModel(PreTrainedModel):
             tptt_model, config, self.linear_cache, **config.to_dict()
         )
 
-        # 3. Apply LoRA if present and configured
+        # 3. Apply LoRA/Specific if present and configured
         if config.lora_config is not None:
             lora_config_obj = LoraConfig(**config.lora_config)
             tptt_model = get_peft_model(tptt_model, lora_config_obj)
-            if repo_or_path:
-                tptt_model = load_tptt_safetensors(
-                    repo_or_path,
-                    tptt_model,
-                    token=kwargs.get("token", None),
-                    init=True,
-                )
+        else:
+            tptt_model = set_trainable_parameters(tptt_model)
+
+        # 4. Load safetensor if tptt/peft adaptor in repo
+        if repo_or_path:
+            tptt_model = load_tptt_safetensors(
+                repo_or_path,
+                tptt_model,
+                subfolder=kwargs.get("subfolder", None),
+                token=kwargs.get("token", None),
+            )
         self.tptt_model = tptt_model
 
     def forward(
@@ -754,7 +794,7 @@ class TpttModel(PreTrainedModel):
         # 1. Save true weights and adapte keys
         save_tptt_safetensors(self, path)
         # 2. Copy Python files for trust_remote_code
-        self._copy_source_files(path)
+        self._copy_source_files(path, **kwargs)
 
     def _adjust_save_strategy(self, path: str, **kwargs):
         """Re-adapt/remove the weight safetensor and saved adapter config"""
@@ -767,13 +807,18 @@ class TpttModel(PreTrainedModel):
         if os.path.exists(adapter_path):
             os.remove(adapter_path)
 
-    def _copy_source_files(self, path: str):
+    def _copy_source_files(self, target_path: str, **kwargs):
         """Copy all .py files from package directory for trust_remote_code."""
         src_dir = os.path.dirname(os.path.abspath(__file__))
+        dst_dir = (
+            f"./{str(Path(target_path).parts[0])}"
+            if kwargs.get("subfolder", False)
+            else target_path
+        )
         for fname in os.listdir(src_dir):
             if fname.endswith(".py"):
                 src = os.path.join(src_dir, fname)
-                dst = os.path.join(path, fname)
+                dst = os.path.join(dst_dir, fname)
                 shutil.copy2(src, dst)
 
     def retie_lm_after_load(self, **kwargs):
@@ -1245,6 +1290,33 @@ def find_embedding_lm(module: nn.Module) -> Optional[nn.Module]:
         ):
             return child.token_embeddings
     return None
+
+
+def set_trainable_parameters(
+    model: PreTrainedModel, trainable_patterns: List[str] = None
+) -> PreTrainedModel:
+    """Freeze model parameters except trainable_patterns."""
+    if trainable_patterns is None:
+        trainable_patterns = [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "qkv_proj",
+            "out_proj",
+            "c_attn",
+            "c_proj",
+            "query",
+            "key",
+            "value",
+        ]
+
+    for name, param in model.named_parameters():
+        param.requires_grad = any(pattern in name for pattern in trainable_patterns)
+
+    trainable_layers = [n for n, p in model.named_parameters() if p.requires_grad]
+    logger.info("Trainable parameters after freeze: %s", trainable_layers)
+    return model
 
 
 def ensure_stability(

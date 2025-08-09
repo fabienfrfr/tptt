@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "tptt"
-version = "0.11.4"
+version = "0.11.5"
 description = "TPTT : Transforming Pretrained Transformers into Titans"
 authors = ["fabienfrfr <fabien.furfaro@gmail.com>"]
 license = "Apache-2.0"

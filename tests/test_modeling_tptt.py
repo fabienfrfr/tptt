@@ -62,7 +62,7 @@ def setup_model(monkeypatch):
     )
     monkeypatch.setattr(
         "src.tptt.modeling_tptt.load_tptt_safetensors",
-        lambda repo, model, token=None, init=False: tptt_model_mock,
+        lambda repo, model, token=None, subfolder=None: tptt_model_mock,
     )
     logger_mock = MagicMock()
     monkeypatch.setattr("src.tptt.modeling_tptt.logger", logger_mock)

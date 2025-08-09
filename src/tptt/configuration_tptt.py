@@ -87,6 +87,7 @@ class TpttConfig(PretrainedConfig):
         self,
         base_model_config: Optional[Union[dict, PretrainedConfig]] = None,
         base_model_name: str = "meta-llama/Llama-3.2-1B",
+        base_model_subfolder: Optional = None,
         name_or_path: Optional[str] = None,
         target_modules_names: Optional[List[str]] = None,
         operator_mode: str = "delta_rule",
@@ -118,6 +119,7 @@ class TpttConfig(PretrainedConfig):
             setattr(self, k, v)
 
         self.base_model_name = base_model_name
+        self.base_model_subfolder = base_model_subfolder
 
         if name_or_path is not None:
             self._name_or_path = name_or_path
@@ -138,7 +140,6 @@ class TpttConfig(PretrainedConfig):
         self.cross_gate = cross_gate
         self.max_chunk_size = max_chunk_size
         self.max_self_attn_length = max_self_attn_length
-
         if isinstance(linear_precision, torch.dtype):
             linear_precision = str(linear_precision).replace("torch.", "")
         self.linear_precision = linear_precision
@@ -247,9 +248,14 @@ def get_mode_name(
     return base + (("_" + "_".join(parts)) if parts else "")
 
 
-def generate_model_card(path: str, config: PretrainedConfig, **kwargs) -> None:
+def generate_model_card(
+    path: str, config: PretrainedConfig, is_model_card: bool = True, **kwargs
+) -> None:
     """Generate model card from template and training metadata."""
-    template_path = os.path.join(os.path.dirname(__file__), "model_card_template.md")
+    template_path = os.path.join(
+        os.path.dirname(__file__),
+        "model_card_template.md" if is_model_card else "home_card.md",
+    )
     with open(template_path, "r", encoding="utf-8") as f:
         template = f.read()
 
