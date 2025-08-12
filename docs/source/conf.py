@@ -5,8 +5,12 @@
 
 import os
 import sys
+from sphinx_pyproject import SphinxConfig
 
 sys.path.insert(0, os.path.abspath("../../src"))
+
+# Load pyproject.toml info
+config = SphinxConfig("../../pyproject.toml", style="poetry", globalns=globals())
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
@@ -14,7 +18,6 @@ sys.path.insert(0, os.path.abspath("../../src"))
 project = "TPTT"
 copyright = "2025, Furfaro Fabien"
 author = "Furfaro Fabien"
-release = "0.1.0"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration

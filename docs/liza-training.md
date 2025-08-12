@@ -247,15 +247,20 @@ model_tptt = AutoModelForCausalLM.from_pretrained(repo_id, trust_remote_code=Tru
 
 ## Inference
 
-### Inference Pipeline
-
-Use the TPTT pipeline to generate text from the trained model:
+Use generate text from the trained model:
 
 ```python
-
-pipe = tptt.TpttPipeline(model=model_tptt, tokenizer=tokenizer, device=device)
-result = pipe("Bonjour, I'm Fabien Furfaro,", max_new_tokens=100)
-
+# Rapid testing 
+model.linear_cache.reset() # flush previous memory
+prompt = "Bonjour, I'm Fabien Furfaro, "
+inputs = tokenizer(prompt, return_tensors="pt").to('cuda:0')
+model.to('cuda:0').eval()
+outputs = model.generate(
+    **inputs,
+    max_new_tokens=100,
+    do_sample=False,
+)
+print(tokenizer.decode(outputs[0]))
 ```
 
 Also, you can use your own pipeline, or only generate.

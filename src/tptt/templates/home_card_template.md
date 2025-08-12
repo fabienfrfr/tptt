@@ -7,12 +7,12 @@ tags:
   - peft
   - trust_remote_code
 pipeline_tag: text-generation
-base_model: {base_model_name}
+base_model: {{config.base_model_name}}
 datasets:
-- {dataset}
+- {{dataset}}
 ---
 
-# {model_id}
+# {{model_id}}
 
 <p align="center">
     <a href="https://arxiv.org/abs/2506.17671">
@@ -32,7 +32,7 @@ datasets:
     </a>
 </p>
 
-Titanesque version of `{base_model_name}` with parallel linearized attention (TPTT 😊) and PEFT.
+Titanesque version of `{{config.base_model_name}}` with parallel linearized attention (TPTT 😊) and PEFT.
 
 The architecture was presented in the paper [TPTT](https://huggingface.co/papers/2506.17671).
 
@@ -45,7 +45,7 @@ Classic model parameter with LiZA injection :
 |-------------------------------|----------------------|------------|------------|----------------|---------------|------|-------------------------------------------------------|
 | delta_rule  | 8192 (default)       | 0.5        | False      | 64             | False         | Yes  | Parallel linearized attention with delta_rule operator|
 | delta_rule_gelu | 8192 (default) | 0.5        | False      | 64             | False         | Yes  | Non-linear operator with gelu activation              |
-| delta_product    | 8192 (default) | 0.5        | False      | 64             | False         | Yes  | Second order operator with product trick              |
+| delta_product    | 8192 (default) | 0.5        | False      | 64             | False         | Yes  | Second order operator with derivative trick              |
 | delta_product_r  | 8192 (default) | 0.5        | False      | 64             | False         | Yes  | Second order operator with rotative trick             |
 | delta_product_c  | 8192 (default) | 0.5        | False      | 64             | False         | Yes  | Second order operator with combined trick             |
 
@@ -55,11 +55,11 @@ Classic model parameter with LiZA injection :
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 model = AutoModelForCausalLM.from_pretrained(
-"ffurfaro/{model_id}",
+"ffurfaro/{{model_id}}",
 subfolder="tptt_subfolder", # see in repo tree
 trust_remote_code=True
 )
-tokenizer = AutoTokenizer.from_pretrained("ffurfaro/{model_id}")
+tokenizer = AutoTokenizer.from_pretrained("ffurfaro/{{config.base_model_name}}")
 
 prompt = "Your prompt here"
 inputs = tokenizer(prompt, return_tensors="pt")

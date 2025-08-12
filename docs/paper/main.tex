@@ -312,7 +312,8 @@ Our approach injects linearized attention and memory augmentation modules into p
 \begin{enumerate}
     \item \textbf{Identification of Target Modules:} Key attention layers to be modified are identified using tools such as \textit{get\_tptt\_model}.
     \item \textbf{Modification of Attention Layers:} These layers are replaced or extended with the proposed \textit{LiZAttention} module, which implements both linear and softmax attention with linear projection weigth sharing and MaG.
-    \item \textbf{Training and Fine-Tuning:} The modified model is fine-tuned using parameter-efficient methods such as LoRA~\cite{hu2022lora}, ensuring optimal adaptation to the new mechanisms without full retraining.
+    \item \textbf{Training and Fine-Tuning:} The modified model is fine-tuned using parameter-efficient methods such as {get\_peft\_model} LoRA~\cite{hu2022lora} or specific pattern, ensuring optimal adaptation to the new mechanisms without full retraining.
+    \item \textbf{Save and Loading strategies:} {save\_tptt\_safetensors} {load\_tptt\_safetensors}.
 \end{enumerate}
 This procedure enables the transformation of any causal pretrained LLM into a memory-augmented, efficient architecture with minimal overhead, that without any new layers.
 

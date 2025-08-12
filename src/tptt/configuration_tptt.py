@@ -7,6 +7,7 @@ import logging
 import os
 import re
 from typing import Any, Dict, List, Optional, Union
+from jinja2 import Environment, FileSystemLoader
 
 import torch
 from transformers import AutoConfig, PretrainedConfig
@@ -176,11 +177,6 @@ class TpttConfig(PretrainedConfig):
 TpttConfig.register_for_auto_class()
 
 
-def extract_template_variables(template: str) -> set:
-    """Basic extract variable from md template"""
-    return set(re.findall(r"\{([^{}]+)\}", template))
-
-
 def parse_mode_name(name: str) -> dict:
     """Parse mode to recurrent config"""
     if name.startswith("delta_product"):
@@ -248,47 +244,54 @@ def get_mode_name(
     return base + (("_" + "_".join(parts)) if parts else "")
 
 
+def render_template(template_path: str, variables: dict) -> str:
+    """Load and render a Jinja2 template from any file path."""
+    env = Environment(loader=FileSystemLoader(os.path.dirname(template_path)))
+    template = env.get_template(os.path.basename(template_path))
+    return template.render(**variables)
+
+
+def write_model_card(output_path: str, content: str):
+    """Write the generated content into README.md."""
+    os.makedirs(output_path, exist_ok=True)
+    readme_path = os.path.join(output_path, "README.md")
+    with open(readme_path, "w", encoding="utf-8") as f:
+        f.write(content)
+
+
 def generate_model_card(
-    path: str, config: PretrainedConfig, is_model_card: bool = True, **kwargs
-) -> None:
-    """Generate model card from template and training metadata."""
-    template_path = os.path.join(
-        os.path.dirname(__file__),
-        "model_card_template.md" if is_model_card else "home_card.md",
-    )
-    with open(template_path, "r", encoding="utf-8") as f:
-        template = f.read()
+    output_path: str,
+    config: Union[dict, object],
+    template: Optional[
+        str
+    ],  # can be "model_card" OR an absolute/relative path to a .md file
+    extra_variables: Optional[Dict] = None,
+):
+    """
+    Generate a README.md file from a Jinja2 template and a configuration.
 
-    # Flatten config
-    def flatten_config(config: PretrainedConfig) -> dict:
-        result = {}
-        if hasattr(config, "__dict__"):
-            config = config.__dict__
-        for k, v in config.items():
-            if isinstance(v, dict):
-                for subk, subv in v.items():
-                    result[f"{k}_{subk}"] = subv
-            else:
-                result[k] = v
-        return result
+    - template can be either:
+        * a full path to a template file
+        * a short name (e.g., "model_card") -> will be looked up inside default_templates_dir
+    """
+    if template is None:
+        template = "model_card_template"  # default template name
+    # Locate the template
+    if os.path.exists(template):  # direct file path provided
+        template_path = template
+    else:
+        default_templates_dir = os.path.join(os.path.dirname(__file__), "templates")
+        template_path = os.path.join(default_templates_dir, f"{template}.md")
 
-    variables = flatten_config(config)
-    variables.update(kwargs)
-    variables["model_id"] = os.path.basename(path)
+    if not os.path.exists(template_path):
+        raise FileNotFoundError(f"Template not found: {template_path}")
 
-    # Extract variables from template
-    template_vars = extract_template_variables(template)
+    variables = {
+        "model_id": os.path.basename(output_path),
+        "config": config,
+    }
+    if extra_variables:
+        variables.update(extra_variables)
 
-    # Add default values for missing variables
-    for var in template_vars:
-        if var not in variables:
-            variables[var] = "N/A"
-
-    # Handle list conversion (optional but useful)
-    for k, v in variables.items():
-        if isinstance(v, list):
-            variables[k] = ", ".join(map(str, v))
-
-    model_card_content = template.format(**variables)
-    with open(os.path.join(path, "README.md"), "w", encoding="utf-8") as f:
-        f.write(model_card_content)
+    content = render_template(template_path, variables)
+    write_model_card(output_path, content)

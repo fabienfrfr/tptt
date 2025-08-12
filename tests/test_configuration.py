@@ -8,9 +8,12 @@ import torch
 from transformers import PretrainedConfig
 
 import src.tptt.configuration_tptt as tpttconf
-from src.tptt.configuration_tptt import (TpttConfig, convert_sets_to_lists,
-                                         extract_template_variables,
-                                         get_mode_name, parse_mode_name)
+from src.tptt.configuration_tptt import (
+    TpttConfig,
+    convert_sets_to_lists,
+    get_mode_name,
+    parse_mode_name,
+)
 
 
 def test_tptt_config_base_model_is_none(monkeypatch):  # pylint: disable=unused-argument
@@ -66,90 +69,90 @@ def test_parse_mode_name_invalid_mode():
         parse_mode_name("unknown_super_mode")
 
 
-def test_generate_model_card_basic(tmp_path, monkeypatch):
-    """Test generate_model_card writes variables to README.md."""
-    # Crée un template simple avec 2 champs
-    template_txt = "Hello {model_id} and {hidden_size}!"
-    template_path = tmp_path / "model_card_template.md"
-    template_path.write_text(template_txt, encoding="utf-8")
+def test_generate_model_card_with_path(tmp_path):
+    """It should generate a README.md using a direct template file path."""
+    # Create a simple Jinja2 template with one config variable
+    template_content = "Hello {{ model_id }} and {{ config.hidden_size }}!"
+    template_path = tmp_path / "custom_template.md"
+    template_path.write_text(template_content, encoding="utf-8")
 
-    # Patch __file__ pour os.path.dirname(__file__)
-    monkeypatch.setattr(tpttconf, "__file__", str(template_path))
+    # Dummy config
+    class DummyConfig:
+        def __init__(self):
+            self.hidden_size = 123
+
+    # Call function with direct template path
+    tpttconf.generate_model_card(
+        output_path=str(tmp_path), config=DummyConfig(), template=str(template_path)
+    )
+
+    # Verify README was generated correctly
+    readme_path = tmp_path / "README.md"
+    assert readme_path.exists()
+    content = readme_path.read_text(encoding="utf-8")
+    assert "Hello" in content
+    assert "123" in content
+
+
+def test_generate_model_card_with_template_name(tmp_path, monkeypatch):
+    """It should load a template by name from the default templates directory."""
+    # Create a fake templates folder and monkeypatch __file__
+    fake_templates_dir = tmp_path / "templates"
+    fake_templates_dir.mkdir()
+    template_content = "Name: {{ model_id }}, Size: {{ config.size }}"
+    template_file = fake_templates_dir / "model_card_template.md"
+    template_file.write_text(template_content, encoding="utf-8")
+
+    monkeypatch.setattr(tpttconf, "__file__", str(tmp_path / "dummy_module.py"))
 
     class DummyConfig:
-        """Dummy config"""
-
         def __init__(self):
-            self.__dict__ = {"hidden_size": 123}
+            self.size = 42
 
-    # Appel de generate_model_card
-    tpttconf.generate_model_card(str(tmp_path), DummyConfig())
+    tpttconf.generate_model_card(
+        output_path=str(tmp_path),
+        config=DummyConfig(),
+        template=None,  # Will default to "model_card_template"
+    )
 
-    # Vérification du README généré
-    out = (tmp_path / "README.md").read_text(encoding="utf-8")
-    assert "Hello" in out and "123" in out and "README.md" not in out
+    content = (tmp_path / "README.md").read_text(encoding="utf-8")
+    assert "42" in content
 
 
-def test_generate_model_card_flatten_dict(tmp_path, monkeypatch):
-    """Test flatten_config for dict and non-dict values."""
-    template_txt = "{dummy_foo_bar} - {dummy_baz}"
-    template_path = tmp_path / "model_card_template.md"
-    template_path.write_text(template_txt, encoding="utf-8")
+def test_generate_model_card_extra_variables(tmp_path):
+    """It should accept and render extra_variables dict from the user."""
+    template_content = "Extra: {{ extra }}, Config: {{ config.value }}"
+    template_path = tmp_path / "template.md"
+    template_path.write_text(template_content, encoding="utf-8")
 
-    monkeypatch.setattr(tpttconf, "__file__", str(template_path))
-
-    class DummyConfig:  # pylint: disable=too-few-public-methods
-        """Dummy config"""
-
+    class DummyConfig:
         def __init__(self):
-            self.dummy_foo = {"bar": 42}
-            self.dummy_baz = 99
-            self.__dict__ = {"dummy_foo": {"bar": 42}, "dummy_baz": 99}
+            self.value = "cfg"
 
-    tpttconf.generate_model_card(str(tmp_path), DummyConfig())
+    tpttconf.generate_model_card(
+        output_path=str(tmp_path),
+        config=DummyConfig(),
+        template=str(template_path),
+        extra_variables={"extra": "custom_value"},
+    )
 
-    out = (tmp_path / "README.md").read_text(encoding="utf-8")
-    assert "42" in out and "99" in out
-
-
-def test_generate_model_card_missing_variable(tmp_path, monkeypatch):
-    """Test that missing variables are filled as 'N/A'."""
-    template_txt = "Hello {present} & {missing} !"
-    template_path = tmp_path / "model_card_template.md"
-    template_path.write_text(template_txt, encoding="utf-8")
-
-    monkeypatch.setattr(tpttconf, "__file__", str(template_path))
-
-    class DummyConfig:  # pylint: disable=too-few-public-methods
-        """Dummy conf"""
-
-        def __init__(self):
-            self.present = "Here"
-            self.__dict__ = {"present": "Here"}
-
-    tpttconf.generate_model_card(str(tmp_path), DummyConfig())
-    out = (tmp_path / "README.md").read_text(encoding="utf-8")
-    assert "Here" in out
-    assert "N/A" in out  # pour {missing}
+    output = (tmp_path / "README.md").read_text(encoding="utf-8")
+    assert "custom_value" in output
+    assert "cfg" in output
 
 
-def test_generate_model_card_list_via_kwargs(tmp_path, monkeypatch):
-    """Directly pass a list in kwargs to ensure variables[k] is a list."""
-    template_txt = "K: {k}"
-    template_path = tmp_path / "model_card_template.md"
-    template_path.write_text(template_txt, encoding="utf-8")
+def test_generate_model_card_missing_template_raises(tmp_path):
+    """It should raise FileNotFoundError if template does not exist."""
 
-    monkeypatch.setattr(tpttconf, "__file__", str(template_path))
+    class DummyConfig:
+        pass
 
-    class DummyConfig:  # pylint: disable=too-few-public-methods
-        """Dummy config"""  # no "k" in dict
-
-        def __init__(self):
-            self.__dict__ = {}
-
-    tpttconf.generate_model_card(str(tmp_path), DummyConfig(), k=[1, 2, 3])
-    out = (tmp_path / "README.md").read_text(encoding="utf-8")
-    assert "1, 2, 3" in out
+    with pytest.raises(FileNotFoundError):
+        tpttconf.generate_model_card(
+            output_path=str(tmp_path),
+            config=DummyConfig(),
+            template="nonexistent_template_name",
+        )
 
 
 def test_convert_sets_to_lists_basic():
@@ -214,23 +217,6 @@ def test_tptt_config_custom_operator_mode():
     )
     assert config.recurrent_config["trick"] == "rotative"
     assert config.recurrent_config["gate_type"] == "kv"
-
-
-def test_extract_template_variables_basic():
-    """Tests for basic extract_template_variables"""
-    template = "Hello {name}, your code is {code}"
-    assert extract_template_variables(template) == {"name", "code"}
-
-
-def test_extract_template_variables_nested():
-    """Tests for nested extract_template_variables"""
-    template = "{{outer}} {inner} {{nested{deep}}}"
-    assert extract_template_variables(template) == {"outer", "inner", "deep"}
-
-
-def test_extract_template_variables_empty():
-    """Tests for empty extract_template_variables"""
-    assert extract_template_variables("No variables") == set()
 
 
 @pytest.mark.parametrize(

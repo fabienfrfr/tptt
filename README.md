@@ -35,6 +35,8 @@
 - **Modular Design**: Easily extend or customize operators and integration strategies.
 - **Compatibility**: Designed to integrate with Hugging Face Transformers and similar PyTorch models.
 
+> [!IMPORTANT]
+> After the injection of LiZA, the model must be fine‑tuned for alignment.
 
 ![overview](./docs/fig.png)
 
