@@ -54,10 +54,11 @@
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="#tptt.configuration_tptt.convert_sets_to_lists"><code class="docutils literal notranslate"><span class="pre">convert_sets_to_lists()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="#tptt.configuration_tptt.extract_template_variables"><code class="docutils literal notranslate"><span class="pre">extract_template_variables()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="#tptt.configuration_tptt.generate_model_card"><code class="docutils literal notranslate"><span class="pre">generate_model_card()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="#tptt.configuration_tptt.get_mode_name"><code class="docutils literal notranslate"><span class="pre">get_mode_name()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="#tptt.configuration_tptt.parse_mode_name"><code class="docutils literal notranslate"><span class="pre">parse_mode_name()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#tptt.configuration_tptt.render_template"><code class="docutils literal notranslate"><span class="pre">render_template()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#tptt.configuration_tptt.write_model_card"><code class="docutils literal notranslate"><span class="pre">write_model_card()</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="#module-tptt.modeling_tptt">tptt.modeling_tptt module</a><ul>
@@ -254,15 +255,19 @@ This class merges the backbone config (e.g., Llama) with custom TPTT parameters,
 </dd></dl>
 
 <dl class="py function">
-<dt class="sig sig-object py" id="tptt.configuration_tptt.extract_template_variables">
-<span class="sig-prename descclassname"><span class="pre">tptt.configuration_tptt.</span></span><span class="sig-name descname"><span class="pre">extract_template_variables</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">template</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">set</span></span></span><a class="headerlink" href="#tptt.configuration_tptt.extract_template_variables" title="Link to this definition"></a></dt>
-<dd><p>Basic extract variable from md template</p>
-</dd></dl>
-
-<dl class="py function">
 <dt class="sig sig-object py" id="tptt.configuration_tptt.generate_model_card">
-<span class="sig-prename descclassname"><span class="pre">tptt.configuration_tptt.</span></span><span class="sig-name descname"><span class="pre">generate_model_card</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">config</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">PretrainedConfig</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">is_model_card</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="headerlink" href="#tptt.configuration_tptt.generate_model_card" title="Link to this definition"></a></dt>
-<dd><p>Generate model card from template and training metadata.</p>
+<span class="sig-prename descclassname"><span class="pre">tptt.configuration_tptt.</span></span><span class="sig-name descname"><span class="pre">generate_model_card</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">output_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">config</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">dict</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">object</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">template</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">extra_variables</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Dict</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#tptt.configuration_tptt.generate_model_card" title="Link to this definition"></a></dt>
+<dd><p>Generate a README.md file from a Jinja2 template and a configuration.</p>
+<ul class="simple">
+<li><dl class="simple">
+<dt>template can be either:</dt><dd><ul>
+<li><p>a full path to a template file</p></li>
+<li><p>a short name (e.g., “model_card”) -&gt; will be looked up inside default_templates_dir</p></li>
+</ul>
+</dd>
+</dl>
+</li>
+</ul>
 </dd></dl>
 
 <dl class="py function">
@@ -275,6 +280,18 @@ This class merges the backbone config (e.g., Llama) with custom TPTT parameters,
 <dt class="sig sig-object py" id="tptt.configuration_tptt.parse_mode_name">
 <span class="sig-prename descclassname"><span class="pre">tptt.configuration_tptt.</span></span><span class="sig-name descname"><span class="pre">parse_mode_name</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">dict</span></span></span><a class="headerlink" href="#tptt.configuration_tptt.parse_mode_name" title="Link to this definition"></a></dt>
 <dd><p>Parse mode to recurrent config</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="tptt.configuration_tptt.render_template">
+<span class="sig-prename descclassname"><span class="pre">tptt.configuration_tptt.</span></span><span class="sig-name descname"><span class="pre">render_template</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">template_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">variables</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">dict</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="headerlink" href="#tptt.configuration_tptt.render_template" title="Link to this definition"></a></dt>
+<dd><p>Load and render a Jinja2 template from any file path.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="tptt.configuration_tptt.write_model_card">
+<span class="sig-prename descclassname"><span class="pre">tptt.configuration_tptt.</span></span><span class="sig-name descname"><span class="pre">write_model_card</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">output_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">content</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#tptt.configuration_tptt.write_model_card" title="Link to this definition"></a></dt>
+<dd><p>Write the generated content into README.md.</p>
 </dd></dl>
 
 </section>
@@ -793,8 +810,18 @@ Handles only architecture and weights.</p>
 
 <dl class="py function">
 <dt class="sig sig-object py" id="tptt.generate_model_card">
-<span class="sig-prename descclassname"><span class="pre">tptt.</span></span><span class="sig-name descname"><span class="pre">generate_model_card</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">config</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">PretrainedConfig</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">is_model_card</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="headerlink" href="#tptt.generate_model_card" title="Link to this definition"></a></dt>
-<dd><p>Generate model card from template and training metadata.</p>
+<span class="sig-prename descclassname"><span class="pre">tptt.</span></span><span class="sig-name descname"><span class="pre">generate_model_card</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">output_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">config</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">dict</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">object</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">template</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">extra_variables</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Dict</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#tptt.generate_model_card" title="Link to this definition"></a></dt>
+<dd><p>Generate a README.md file from a Jinja2 template and a configuration.</p>
+<ul class="simple">
+<li><dl class="simple">
+<dt>template can be either:</dt><dd><ul>
+<li><p>a full path to a template file</p></li>
+<li><p>a short name (e.g., “model_card”) -&gt; will be looked up inside default_templates_dir</p></li>
+</ul>
+</dd>
+</dl>
+</li>
+</ul>
 </dd></dl>
 
 <dl class="py function">
