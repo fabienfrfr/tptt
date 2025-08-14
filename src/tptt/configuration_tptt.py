@@ -96,7 +96,7 @@ class TpttConfig(PretrainedConfig):
         name_or_path: Optional[str] = None,
         target_modules_names: Optional[List[str]] = None,
         operator_mode: str = "delta_rule",
-        use_linear_checkpoint: bool = False,
+        use_linear_checkpoint: Optional[bool] = None,
         max_self_attn_length: Optional[
             int
         ] = None,  # unnecessary if SWA, else, standards 8192
@@ -141,19 +141,19 @@ class TpttConfig(PretrainedConfig):
             "attention",
         ]
         self.operator_mode = operator_mode
-        self.use_linear_checkpoint = use_linear_checkpoint
+
         # Detect available memory on accelerator device
         if torch.cuda.is_available():
             _, total_mem = torch.cuda.mem_get_info()
-            total_mem_gb = total_mem / BYTES_IN_GB
         else:
-            mem = psutil.virtual_memory()
-            total_mem_gb = mem.total / BYTES_IN_GB
+            total_mem = psutil.virtual_memory().total
+        total_mem_gb = total_mem / BYTES_IN_GB
 
-        if total_mem_gb < 16:
-            print(
-                f"Low memory, might need checkpointing. Total (V)RAM: {total_mem_gb} GB"
-            )
+        self.use_linear_checkpoint = (
+            total_mem_gb < 16
+            if use_linear_checkpoint is None
+            else use_linear_checkpoint
+        )
 
         self.base_scale_attn = base_scale_attn
         self.mag_weight = mag_weight

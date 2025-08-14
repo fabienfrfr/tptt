@@ -36,6 +36,7 @@ model_configs:
       - "v_proj"
       - "o_proj"
     quantization: false
+    task_type: "causal-lm"
 
   mistral:
     base_model_name: "mistralai/Mistral-7B-v0.3"
@@ -67,26 +68,39 @@ model_configs:
       - "o_proj"
     quantization: true
 
+linear_config:
+  delta_rule:
+    linear_checkpointing: true
+    linear_precision: "bfloat16"
+  delta_product:
+    linear_checkpointing: true
+
+callback_configs:
+  default:
+    step_size: 1000
+
+  constant:
+    step_size: 1000
+
+  switch:
+    step_size: 1000
+    random_seed: 42
+
 training_configs:
-  llama:
+  testing:
+    batch_size: 1
+    max_length: 128
+    padding: "max_length"
+
+  small:
     batch_size: 4
-    learning_rate: 0.0003
-    epoch: 3
-    lora: true
-    lora_rank: 8
-    quantization: false
+    max_length: 384
+    padding: "longest"
 
-  mistral:
-    batch_size: 2
-    learning_rate: 0.0005
-    epoch: 1
-    lora: true
-    lora_rank: 4
-    quantization: true
+  medium:
+    batch_size: 8
+    max_length: 512
+    padding: "max_length"
 
-  olmo:
-    batch_size: 2
-    learning_rate: 0.0001
-    epoch: 2
-    lora: false
-    quantization: false
+  large:
+    batch_size: 16

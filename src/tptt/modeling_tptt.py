@@ -1162,9 +1162,6 @@ def sequential_delta_product_scan(
 
             outer_product_term = torch.matmul(w_s.unsqueeze(-1), u_val.unsqueeze(-2))
             new_state_i_per_token = state_input_for_this_step + outer_product_term
-            new_state_i_per_token = ensure_stability(
-                new_state_i_per_token, min_val=-1e4, max_val=1e4
-            )
             current_accumulated_state_per_token = new_state_i_per_token.to(
                 dtype=linear_precision
             )
