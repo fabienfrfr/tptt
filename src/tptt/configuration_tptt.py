@@ -9,10 +9,14 @@ import re
 from typing import Any, Dict, List, Optional, Union
 from jinja2 import Environment, FileSystemLoader
 
+import psutil
 import torch
 from transformers import AutoConfig, PretrainedConfig
 
 logger = logging.getLogger(__name__)  # monitoring
+
+# Constants
+BYTES_IN_GB = 1024**3
 
 
 def convert_sets_to_lists(obj):
@@ -88,17 +92,18 @@ class TpttConfig(PretrainedConfig):
         self,
         base_model_config: Optional[Union[dict, PretrainedConfig]] = None,
         base_model_name: str = "meta-llama/Llama-3.2-1B",
-        base_model_subfolder: Optional = None,
+        base_model_subfolder: Optional[str] = None,
         name_or_path: Optional[str] = None,
         target_modules_names: Optional[List[str]] = None,
         operator_mode: str = "delta_rule",
+        use_linear_checkpoint: bool = False,
         max_self_attn_length: Optional[
             int
         ] = None,  # unnecessary if SWA, else, standards 8192
         base_scale_attn: bool = False,
         mag_weight: float = 0.5,  # if 1.0, use only linear operator
         cross_gate: bool = False,  # unlinear mixing strategy
-        max_chunk_size: int = 64,
+        max_chunk_size: int = 64,  # 128 if adaptive chunking (longest)
         linear_precision: Union[str, torch.dtype] = "float32",
         lora_config: Optional[dict] = None,  # only serialized accepted
         padding_side: Optional[str] = None,  # for tokenizer, default "right"
@@ -136,6 +141,20 @@ class TpttConfig(PretrainedConfig):
             "attention",
         ]
         self.operator_mode = operator_mode
+        self.use_linear_checkpoint = use_linear_checkpoint
+        # Detect available memory on accelerator device
+        if torch.cuda.is_available():
+            _, total_mem = torch.cuda.mem_get_info()
+            total_mem_gb = total_mem / BYTES_IN_GB
+        else:
+            mem = psutil.virtual_memory()
+            total_mem_gb = mem.total / BYTES_IN_GB
+
+        if total_mem_gb < 16:
+            print(
+                f"Low memory, might need checkpointing. Total (V)RAM: {total_mem_gb} GB"
+            )
+
         self.base_scale_attn = base_scale_attn
         self.mag_weight = mag_weight
         self.cross_gate = cross_gate

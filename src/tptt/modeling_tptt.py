@@ -108,6 +108,7 @@ class LinearAttention(nn.Module):
         shared_attn: bool = False,  # shared attention
         layer_idx: int = 0,
         operator_mode: str = "delta_rule",
+        use_linear_checkpoint: bool = False,
         recurrent_config: Optional[Dict[str, Any]] = None,
         linear_cache: Optional[LCache] = None,
         max_chunk_size: int = 64,
@@ -148,6 +149,7 @@ class LinearAttention(nn.Module):
         self.linear_operator = LinearAttentionOp(
             layer_idx=layer_idx,
             operator_mode=operator_mode,
+            use_linear_checkpoint=use_linear_checkpoint,
             recurrent_config=recurrent_config,
             max_chunk_size=max_chunk_size,
             linear_cache=linear_cache,
@@ -270,6 +272,7 @@ class LiZAttention(nn.Module):
         base_config: PretrainedConfig,  # Backbone Config
         linear_cache: Optional[LCache] = None,
         operator_mode: str = "delta_rule",
+        use_linear_checkpoint: bool = False,
         recurrent_config: Optional[Dict[str, Any]] = None,
         max_self_attn_length: Optional[int] = None,  # unnecessary
         base_scale_attn: bool = False,
@@ -310,6 +313,7 @@ class LiZAttention(nn.Module):
             layer_idx=layer_idx,
             shared_attn=True,
             operator_mode=operator_mode,
+            use_linear_checkpoint=use_linear_checkpoint,
             recurrent_config=recurrent_config,
             hidden_dim=base_config.hidden_size,
             num_heads=self.num_heads,
@@ -628,6 +632,7 @@ def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-a
     liza_attention: nn.Module = LiZAttention,
     target_modules_names: Optional[list[str]] = None,
     operator_mode: str = "delta_rule",
+    use_linear_checkpoint: bool = False,
     recurrent_config: Optional[Dict[str, Any]] = None,
     base_scale_attn: bool = False,
     mag_weight: float = 0.5,
@@ -673,6 +678,7 @@ def get_tptt_model(  # pylint: disable=too-many-arguments, too-many-positional-a
                     base_config=base_config,
                     linear_cache=linear_cache,
                     operator_mode=operator_mode,
+                    use_linear_checkpoint=use_linear_checkpoint,
                     recurrent_config=recurrent_config,
                     max_self_attn_length=max_self_attn_length,
                     base_scale_attn=base_scale_attn,
@@ -865,6 +871,7 @@ class LinearAttentionOp(nn.Module):
         self,
         layer_idx: int,
         operator_mode: str = "delta_rule",
+        use_linear_checkpoint: bool = False,
         recurrent_config: Optional[dict] = None,
         max_chunk_size: int = 64,
         linear_cache: Optional[LCache] = None,
@@ -881,6 +888,8 @@ class LinearAttentionOp(nn.Module):
                 "trick": "derivative",
             }
         self.operator_mode = operator_mode
+        self.use_linear_checkpoint = use_linear_checkpoint
+
         self.order = recurrent_config["order"]
         self.gate_type = recurrent_config["gate_type"]
         self.linear = recurrent_config["linear"]
@@ -967,6 +976,7 @@ class LinearAttentionOp(nn.Module):
 
         # Retrieve cache if needed
         use_cache = kwargs.get("use_cache", False)
+        use_checkpoint = not (use_cache) and self.use_linear_checkpoint
         recurrent_state, qkvb = self.get_cache(use_cache)
 
         if qkvb is not None and qkvb[0].shape == q.shape:
@@ -987,7 +997,7 @@ class LinearAttentionOp(nn.Module):
             trick=self.trick,
             linear=self.linear,
             initial_state=recurrent_state,
-            use_checkpoint=not (use_cache),
+            use_checkpoint=use_checkpoint,
             linear_precision=self.linear_precision,
         )
 

@@ -36,7 +36,7 @@
 - **Compatibility**: Designed to integrate with Hugging Face Transformers and similar PyTorch models.
 
 > [!IMPORTANT]
-> After the injection of LiZA, the model must be fine‑tuned for alignment.
+> After the injection of LiZA, the model must be fine‑tuned for alignment and obtain memory.
 
 ![overview](./docs/fig.png)
 
@@ -97,6 +97,8 @@ layers = nn.ModuleList([
     for _ in range(num_layers)])
 
 ```
+
+Some `scripts` are available [here](./scripts/README.md)  
 
 ---
 

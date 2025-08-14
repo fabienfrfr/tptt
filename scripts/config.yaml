@@ -1,0 +1,92 @@
+model_configs:
+  llama:
+    base_model_name: "meta-llama/Llama-3.2-1B"
+    base_tokenizer_name: "meta-llama/Llama-3.2-1B"
+    target_modules:
+      - "q_proj"
+      - "k_proj"
+      - "v_proj"
+      - "o_proj"
+    quantization: false
+
+  olmo:
+    base_model_name: "allenai/OLMo-1B-hf"
+    base_tokenizer_name: "allenai/OLMo-1B-hf"
+    target_modules:
+      - "q_proj"
+      - "k_proj"
+      - "v_proj"
+      - "o_proj"
+    quantization: false
+
+  elm:
+    base_model_name: "apple/OpenELM-1_1B"
+    base_tokenizer_name: "meta-llama/Llama-2-7b-hf"
+    target_modules:
+      - "qkv_proj"
+      - "out_proj"
+    quantization: false
+
+  qwen:
+    base_model_name: "Qwen/Qwen2.5-1.5B"
+    base_tokenizer_name: "Qwen/Qwen2.5-1.5B"
+    target_modules:
+      - "q_proj"
+      - "k_proj"
+      - "v_proj"
+      - "o_proj"
+    quantization: false
+
+  mistral:
+    base_model_name: "mistralai/Mistral-7B-v0.3"
+    base_tokenizer_name: "mistralai/Mistral-7B-v0.3"
+    target_modules:
+      - "q_proj"
+      - "k_proj"
+      - "v_proj"
+      - "o_proj"
+    quantization: true
+
+  moe:
+    base_model_name: "allenai/OLMoE-1B-7B-0924"
+    base_tokenizer_name: "allenai/OLMoE-1B-7B-0924"
+    target_modules:
+      - "q_proj"
+      - "k_proj"
+      - "v_proj"
+      - "o_proj"
+    quantization: true
+
+  diffusion:
+    base_model_name: "Dream-org/Dream-v0-Base-7B"
+    base_tokenizer_name: "Dream-org/Dream-v0-Base-7B"
+    target_modules:
+      - "q_proj"
+      - "k_proj"
+      - "v_proj"
+      - "o_proj"
+    quantization: true
+
+training_configs:
+  llama:
+    batch_size: 4
+    learning_rate: 0.0003
+    epoch: 3
+    lora: true
+    lora_rank: 8
+    quantization: false
+
+  mistral:
+    batch_size: 2
+    learning_rate: 0.0005
+    epoch: 1
+    lora: true
+    lora_rank: 4
+    quantization: true
+
+  olmo:
+    batch_size: 2
+    learning_rate: 0.0001
+    epoch: 2
+    lora: false
+    quantization: false
