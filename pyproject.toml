@@ -13,8 +13,8 @@ packages = [
 [tool.poetry.dependencies]
 python = ">=3.10"
 torch = "*"
-transformers = ">=4.45.0,<=4.49.0" # more GPU efficiency (peft)
-#transformers = ">=4.45.0" # more compatible
+#transformers = ">=4.45.0,<=4.49.0" # more GPU efficiency (peft)
+transformers = ">=4.45.0" # more compatible
 datasets = "*"
 ninja = "*"
 einops = "*"
