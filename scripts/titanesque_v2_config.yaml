@@ -1,0 +1,106 @@
+defaults:
+  dataset: "alpaca-cleaned"
+  dataset_percentage: 0.10 # ~5000 samples
+  padding: "longest"
+  max_length: 386
+  seed: 42
+  test_samples: 2
+  run_test_eval: true # Run trainer.predict after training
+  lora: true
+  batch_size: "auto" # Reduce if OOM
+  tokenizer: "auto"
+  training_config: "lora_standard"
+  log_metrics: true # Store TrainOutput metrics
+  hardware_target: "2xT4"
+  max_chunk_size:
+    delta_rule: 64
+    delta_product: 32
+  save_logs_dir: "./logs"
+  save_model_dir: "./checkpoints"
+
+models:
+  - name: "meta-llama/Llama-3.2-1B"
+    type: "causal"
+    attention: "grouped"
+    quantized: false
+    variants:
+      base: true
+      no_lora: true
+      operator_modes: true
+      liza_callback: true
+
+  - name: "Qwen/Qwen2.5-1.5B"
+    type: "causal"
+    norm: "rms_norm"
+    quantized: false
+    variants:
+      base: true
+
+  - name: "apple/OpenELM-1_1B"
+    type: "causal"
+    qkv_arch: "single_linear"
+    quantized: false
+    variants:
+      base: true
+
+  - name: "mistralai/Mistral-7B-v0.3"
+    type: "causal"
+    attention: "sliding_window"
+    quantized: true
+    variants:
+      base: true
+
+  - name: "allenai/OLMoE-1B-7B-0924"
+    type: "moe"
+    quantized: true
+    variants:
+      base: true
+
+  - name: "Dream-org/Dream-v0-Base-7B"
+    type: "diffusion"
+    causal: false
+    bidirectional: true
+    quantized: true
+    variants:
+      base: true
+
+base_variants:
+  - method: "delta_rule"
+    mag_weight: [0.5]
+    disable_linear_attn: [true, false]
+  - method: "delta_product"
+    mag_weight: [0.5]
+    disable_linear_attn: [true, false]
+
+llama_extra:
+  without_lora:
+    - method: "delta_rule"
+      mag_weight: [0.5]
+      disable_linear_attn: [true, false]
+    - method: "delta_product"
+      mag_weight: [0.5]
+      disable_linear_attn: [true, false]
+
+  operator_modes:
+    - method: "delta_rule"
+      mag_weight: [0.5]
+      nonlinear: true
+    - method: "delta_product"
+      mag_weight: [0.5]
+      rotation: true
+    - method: "delta_product_derived"
+      mag_weight: [0.5]
+      rotation: true
+
+  liza_callback:
+    constant_values:
+      - 0.125
+      - 0.25
+      - 0.5
+      - 0.75
+    transitions:
+      - target: 0.5
+        steps: [10, 100, 1000]
+    alternations:
+      - [0, 0.5]
+      - [0, 1.0]

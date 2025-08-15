@@ -98,7 +98,7 @@ layers = nn.ModuleList([
 
 ```
 
-Some `scripts` are available [here](./scripts/README.md)  
+Some `scripts` are available [here](./scripts/)  
 
 ---
 

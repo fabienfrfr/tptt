@@ -150,9 +150,7 @@ class TpttConfig(PretrainedConfig):
         total_mem_gb = total_mem / BYTES_IN_GB
 
         self.use_linear_checkpoint = (
-            total_mem_gb < 16
-            if use_linear_checkpoint is None
-            else use_linear_checkpoint
+            total_mem_gb < 8 if use_linear_checkpoint is None else use_linear_checkpoint
         )
 
         self.base_scale_attn = base_scale_attn
