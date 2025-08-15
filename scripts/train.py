@@ -7,7 +7,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, Trainer, TrainingA
 import torch
 
 app = typer.Typer()
-CONFIG_PATH = Path("titanesque_v2_config.yaml")
+CONFIG_PATH = Path("titanesque_config.yaml")
 
 
 def load_config():
