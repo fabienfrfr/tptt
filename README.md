@@ -149,7 +149,7 @@ If you use TPTT in your academic work, please cite:
 
 ```bibtex
 @article{furfaro2025tptt,
-  title={TPTT: Transforming Pretrained Transformer into Titans},
+  title={TPTT: Transforming Pretrained Transformers into Titans},
   author={Furfaro, Fabien},
   journal={arXiv preprint arXiv:2506.17671},
   year={2025}
