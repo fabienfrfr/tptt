@@ -122,6 +122,27 @@ See `requirements.txt` for the full list.
 
 ---
 
+## Docker Usage
+
+Build and run TPTT with Docker:
+
+```bash
+# Build the image
+docker build -t tptt .
+
+# Run training (with GPU support)
+docker run -it --gpus all \
+  -v $(pwd)/data:/data \
+  -v $(pwd)/outputs:/outputs \
+  tptt python -m train \
+    --model_name "meta-llama/Llama-3.2-1B" \
+    --method delta_rule \
+    --mag_weight 0.5
+
+```
+
+For more details, see the Dockerfile.
+
 ## Citation
 
 If you use TPTT in your academic work, please cite:
