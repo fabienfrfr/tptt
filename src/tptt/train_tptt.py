@@ -44,7 +44,9 @@ class LiZACallback(TrainerCallback):
 
         # Ensure transition_step is an int scalar, not tuple/list
         self.transition_step = ensure_int(transition_step)
-
+        if self.mode == "constant":
+            # For constant mode, transition_step is not used
+            self.initial_weight = self.final_weight
         # For cyclic mode: ensure all weights are float scalars
         if weight_list is not None:
             self.weight_list = [
@@ -66,7 +68,14 @@ class LiZACallback(TrainerCallback):
         transition_step = ensure_int(transition_step)
 
         # Select mag_weight or enable/disable linear attention according to mode
-        if self.mode == "gradual":
+        if self.mode == "constant":
+            # Set mag_weight to final_weight for constant mode
+            weight = self.final_weight
+            for _, module in self.model.named_modules():
+                if isinstance(module, LiZAttention):
+                    module.mag_weight = weight
+
+        elif self.mode == "gradual":
             if current_step <= transition_step:
                 weight = self.initial_weight + (
                     self.final_weight - self.initial_weight
