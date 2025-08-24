@@ -5,19 +5,22 @@ But it for testing and prototyping purposes.
 It is not intended for production use. (squeleton code)
 """
 import os
+
+from dotenv import load_dotenv
+
+load_dotenv()  # take environment variables from .env.
+
+# force to avoid fragmentation error (load_env can flush it)
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+
 import re
 import shutil
 import typer
 import yaml
 from pathlib import Path
 import numpy as np
-
-# force to avoid fragmentation error
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import torch
-
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
 
 import psutil
 from datasets import load_dataset
@@ -31,7 +34,6 @@ from peft import LoraConfig
 from transformers import BitsAndBytesConfig
 
 from huggingface_hub import HfApi
-from dotenv import load_dotenv
 
 # install tptt with `pip install tptt`
 import tptt
@@ -39,7 +41,6 @@ import tptt
 
 # Global
 api = HfApi()
-load_dotenv()
 
 DTYPE_SIZE = {
     torch.float32: 4,
