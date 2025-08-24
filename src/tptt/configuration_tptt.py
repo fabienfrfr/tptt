@@ -94,6 +94,7 @@ class TpttConfig(PretrainedConfig):
         base_model_name: str = "meta-llama/Llama-3.2-1B",
         base_model_subfolder: Optional[str] = None,
         name_or_path: Optional[str] = None,
+        model_task: str = "causal_lm",
         target_modules_names: Optional[List[str]] = None,
         operator_mode: str = "delta_rule",
         use_linear_checkpoint: Optional[bool] = None,
@@ -126,6 +127,7 @@ class TpttConfig(PretrainedConfig):
 
         self.base_model_name = base_model_name
         self.base_model_subfolder = base_model_subfolder
+        self.model_task = model_task
 
         if name_or_path is not None:
             self._name_or_path = name_or_path
@@ -150,7 +152,9 @@ class TpttConfig(PretrainedConfig):
         total_mem_gb = total_mem / BYTES_IN_GB
 
         self.use_linear_checkpoint = (
-            total_mem_gb < 8 if use_linear_checkpoint is None else use_linear_checkpoint
+            total_mem_gb < 16
+            if use_linear_checkpoint is None
+            else use_linear_checkpoint
         )
 
         self.base_scale_attn = base_scale_attn

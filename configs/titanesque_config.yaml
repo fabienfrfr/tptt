@@ -1,8 +1,12 @@
+# Prototyping Script for Titanesque Framework
+# This script is used to train a model with the Titanesque framework.
+# It is intended for testing and prototyping purposes only.
+# It is not intended for production use. (skeleton code)
 # Titanesque config
-dataset: "alpaca-cleaned"
+dataset: "yahma/alpaca-cleaned"
 dataset_percentage: 0.10 # ~5000 samples
 padding: "longest"
-max_length: 386
+max_length: 1024
 seed: 42
 eval_samples: 2
 test_samples: 2
@@ -10,18 +14,22 @@ run_test_eval: true
 lora: true
 batch_size: "auto"
 tokenizer: "auto"
-log_metrics: true # how to get ?
+log_metrics: true
 platform: "Kaggle"
 hardware_target: "2xT4"
-operator_modes: "delta_product"
+operator_mode: "delta_product"
 linear_precision: "bfloat16"
+max_chunk_size: 64
 cross_gate_mode: false
-save_model_dir: "./Titans-v2"
+use_linear_checkpoint: false
+home_model_dir: ""
+folder_model_dir: ""
 
 # LoRA config flattened
 lora_r: 8
 lora_alpha: 16
 lora_dropout: 0.05
+lora_task_type: "CAUSAL_LM" # "CAUSAL_LM", "SEQ_2_SEQ_LM"
 lora_target_modules: [] # empty means default set ["q_proj", "k_proj", "v_proj", "o_proj"]
 
 # Training config flattened: only one active config (standard)
@@ -30,8 +38,9 @@ training_learning_rate: 5e-4
 training_weight_decay: 0.0
 training_gradient_accumulation_steps: 1
 training_max_grad_norm: 1.0
+training_label_smoothing_factor: 0.0
 training_logging_steps: 5
-training_save_steps: 1000
+training_save_steps: 5
 training_save_total_limit: 2
 training_bf16: true
 training_evaluation_strategy: "steps"
@@ -39,16 +48,24 @@ training_report_to: "tensorboard"
 
 # Selected model info (you can override for different runs)
 model_name: "meta-llama/Llama-3.2-1B"
-model_type: "causal"
+model_type: "causal_lm" # "seq2seq"
 model_quantized: false
 model_bidirectional: false
 model_tokenizer: "" # empty means use model_name tokenizer
-model_padding_side: "right" # "left" or "right"
+model_torch_dtype: "bfloat16" # "bfloat16", "float16", "float32"
 
 # Liza callback
 liza_callback_mode: "constant" # "gradual", "cyclic", "switch"
 liza_initial_weight: 0.
 liza_final_weight: 0.5
-liza_transition_steps: 100
+liza_transition_steps: 200
 liza_weight_list: [0.0, 0.5, 1.0]
 liza_switch_period: 1
+
+# Saving config
+model_in_subfolder: true
+remove_checkpoint: true
+generating_model_card: true
+save_to_hfhub: true
+repo_user: "ffurfaro"
+repo_name: ""

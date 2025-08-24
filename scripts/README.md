@@ -1,13 +1,9 @@
 # Titanesque Scripts
 
-This Python script downloads and extracts **only the `scripts` folder** from the `main` branch of the [fabienfrfr/tptt](https://github.com/fabienfrfr/tptt) GitHub repository.
+This Python script downloads and extracts **`scripts`** from the `main` branch of the [fabienfrfr/tptt](https://github.com/fabienfrfr/tptt) GitHub repository.
 
-## Features
+⚠️ This folder contains prototype scripts for experimentation and testing purposes only. It is not designed or tested for production use. This scripts is designed if you want to reproduce the results in [TPTT](https://arxiv.org/abs/2506.17671) paper.
 
-- Downloads the `.zip` archive of the `main` branch  
-- Extracts its contents into a temporary folder  
-- Copies only the `scripts` directory and its content to the current working directory (preserving structure)  
-- Deletes temporary files after extraction  
 
 ## Usage on Notebook
 
@@ -16,48 +12,37 @@ This Python script downloads and extracts **only the `scripts` folder** from the
 Run this cell in your Kaggle notebook:
 
 ```bash
-!git clone --depth 1 https://github.com/fabienfrfr/tptt.git
+!git clone --depth 1 --branch main https://github.com/fabienfrfr/tptt.git
 ```
 
 ***
 
-### 2. Launch training commands
-
-Run training using your desired model and method. For example:
-
-#### Option 1
-```bash
-!PYTHONPATH=./tptt/scripts python -m train train \
-  --model_name "meta-llama/Llama-3.2-1B" \
-  --method delta_rule \
-  --mag_weight 0.5
-```
-
-#### Option 2
-
-```bash
-!export PYTHONPATH=./tptt/scripts
-!python -m train train --model_name "meta-llama/Llama-3.2-1B" --method delta_rule --mag_weight 0.5
-```
-
-#### Option 3
+### 2. Prepare environment
 
 ```python
 import os
-import subprocess
+QUANTIZED=False
+if QUANTIZED :
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-os.environ['PYTHONPATH'] = './tptt/scripts'
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+os.environ["HF_TOKEN"] = HF_TOKEN
+os.environ["MODEL_NAME"] = "meta-llama/Llama-3.2-1B" 
+os.environ["QUANTIZATION"] = "" if QUANTIZED else "--no-model-quantized"
+```
 
-subprocess.run([
-    'python', '-m', 'train', 'train',
-    '--model_name', 'meta-llama/Llama-3.2-1B',
-    '--method', 'delta_rule',
-    '--mag_weight', '0.5'
-])
+### 3. Launch training commands
+
+Run training using your desired model and method. For test example:
+
+```bash
+!python tptt/scripts/train.py --model-name $MODEL_NAME --dataset-percentage 0.001 --max-length 128 $QUANTIZATION --token $HF_TOKEN
 ```
 
 
 ***
+
+⚠️ Disclaimer: Experimental (in progress) ⚠️
 
 ## Training Commands to Cover All Experiment Variants
 

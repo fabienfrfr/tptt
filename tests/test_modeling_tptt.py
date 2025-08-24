@@ -15,7 +15,6 @@ from src.tptt.modeling_tptt import TpttModel
 # Patch HF Hub everywhere !
 @pytest.fixture(autouse=True)
 def patch_huggingface(monkeypatch):
-    # Patch loading of any config from HF
     monkeypatch.setattr(
         "transformers.AutoConfig.from_pretrained", lambda *a, **kw: MagicMock()
     )
@@ -29,6 +28,14 @@ def patch_huggingface(monkeypatch):
     )
     monkeypatch.setattr(
         "src.tptt.modeling_tptt.AutoModelForCausalLM.from_pretrained",
+        lambda *a, **k: MagicMock(),
+    )
+    # Patch AutoModel.from_pretrained as well
+    monkeypatch.setattr(
+        "transformers.AutoModel.from_pretrained", lambda *a, **k: MagicMock()
+    )
+    monkeypatch.setattr(
+        "src.tptt.modeling_tptt.AutoModel.from_pretrained",
         lambda *a, **k: MagicMock(),
     )
 

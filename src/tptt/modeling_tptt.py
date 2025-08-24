@@ -24,7 +24,13 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 from torch import nn
 from torch.utils.checkpoint import checkpoint
-from transformers import AutoConfig, AutoModelForCausalLM, DynamicCache, PreTrainedModel
+from transformers import (
+    AutoConfig,
+    AutoModel,
+    AutoModelForCausalLM,
+    DynamicCache,
+    PreTrainedModel,
+)
 from transformers.configuration_utils import PretrainedConfig
 
 from .configuration_tptt import TpttConfig
@@ -425,6 +431,11 @@ class LiZAttention(nn.Module):
                 ):
                     kwargs["past_key_value"].crop(self.max_self_attn_length - 1)
 
+        # Ensure attention mask is of the correct dtype and device
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(
+                dtype=hidden_states.dtype, device=hidden_states.device
+            )
         # Standard attention (mask and rotation is applied inside)
         base_attn_outputs = self.base_attn(
             hidden_states,
@@ -743,9 +754,13 @@ class TpttModel(PreTrainedModel):
             kwargs_bb["subfolder"] = config.base_model_subfolder
         else:
             kwargs_bb.pop("subfolder", None)
-        tptt_model = AutoModelForCausalLM.from_pretrained(
-            config.base_model_name, **kwargs_bb
-        )
+
+        if config.model_task == "causal_lm":
+            tptt_model = AutoModelForCausalLM.from_pretrained(
+                config.base_model_name, **kwargs_bb
+            )
+        else:
+            tptt_model = AutoModel.from_pretrained(config.base_model_name, **kwargs_bb)
 
         # 2. Inject LiZA attention
         self.linear_cache = LCache()
@@ -758,6 +773,7 @@ class TpttModel(PreTrainedModel):
             lora_config_obj = LoraConfig(**config.lora_config)
             tptt_model = get_peft_model(tptt_model, lora_config_obj)
         else:
+            # Doesn't work if quantization is applied !
             tptt_model = set_trainable_parameters(tptt_model)
 
         # 4. Load safetensor if tptt/peft adaptor in repo

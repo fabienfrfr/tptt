@@ -34,13 +34,16 @@
 - **Support for Linear Attention**: Includes implementations of [DeltaNet](https://arxiv.org/abs/2406.06484) and [DeltaProduct](https://arxiv.org/abs/2502.10297) with optional recurrent nonlinearity between chunks.
 - **Modular Design**: Easily extend or customize operators and integration strategies.
 - **Compatibility**: Designed to integrate with Hugging Face Transformers and similar PyTorch models.
+- **Low-Compute Alignment**: Requires only lightweight fine-tuning after injection, enabling efficient memory integration without heavy retraining.
 
 > [!IMPORTANT]
-> After the injection of LiZA, the model must be fine‑tuned for alignment and obtain memory.
+> After injecting the LiZA module, the model requires fine-tuning to properly align and effectively utilize the memory mechanism.
 
 ![overview](./docs/fig.png)
 
-> **Note**: Order 2 `Delta-Product` has the same expressiveness as titans.
+> **Note**: The Order 2 `Delta-Product` attention mechanism is equally expressive as Titans.
+
+
 
 
 ## Installation and Usage
