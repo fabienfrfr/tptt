@@ -13,7 +13,6 @@ test_samples: 2
 run_test_eval: true
 lora: true
 batch_size: "auto"
-tokenizer: "auto"
 log_metrics: true
 platform: "Kaggle"
 hardware_target: "2xT4"
@@ -53,6 +52,7 @@ model_quantized: false
 model_bidirectional: false
 model_tokenizer: "" # empty means use model_name tokenizer
 model_torch_dtype: "bfloat16" # "bfloat16", "float16", "float32"
+model_attn_implementation: "eager" # "eager", "sdpa", "flash"
 
 # Liza callback
 liza_callback_mode: "constant" # "gradual", "cyclic", "switch"

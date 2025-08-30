@@ -209,14 +209,18 @@ def test_apply_shared_projections_qkv_proj():
                 "num_key_value_groups": 2,
             },
             {},
-            (2, 8, 2, 2),
+            (2, 8, 2, 2, 16),
         ),
         # 2. missing some attrs, fallback head_dim = hidden_size // num_heads
-        ({"num_heads": 2, "num_kv_heads": 2}, {}, (2, 8, 2, 1)),
+        ({"num_heads": 2, "num_kv_heads": 2}, {}, (2, 8, 2, 1, 16)),
         # 3. Everything via config, pristine
-        ({}, {"num_heads": 3, "head_dim": 5, "num_key_value_heads": 7}, (3, 5, 7, 0)),
+        (
+            {},
+            {"num_heads": 3, "head_dim": 5, "num_key_value_heads": 7},
+            (3, 5, 7, 0, 16),
+        ),
         # 4. only hidden_size and num_heads, test fallback for head_dim
-        ({}, {"hidden_size": 16, "num_heads": 2}, (2, 8, 2, 1)),
+        ({}, {"hidden_size": 16, "num_heads": 2}, (2, 8, 2, 1, 16)),
     ],
 )
 def test_get_attention_parameters(attn_kwargs, config_kwargs, expected):

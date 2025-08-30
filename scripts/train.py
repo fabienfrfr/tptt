@@ -5,19 +5,21 @@ But it for testing and prototyping purposes.
 It is not intended for production use. (squeleton code)
 """
 import os
+from dotenv import load_dotenv
+
+load_dotenv()  # take environment variables from .env.
+
+# force to avoid fragmentation error (load_env can flush it)
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+import ast
 import re
 import shutil
 import typer
 import yaml
 from pathlib import Path
 import numpy as np
-
-# force to avoid fragmentation error
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import torch
-
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
 
 import psutil
 from datasets import load_dataset
@@ -31,7 +33,6 @@ from peft import LoraConfig
 from transformers import BitsAndBytesConfig
 
 from huggingface_hub import HfApi
-from dotenv import load_dotenv
 
 # install tptt with `pip install tptt`
 import tptt
@@ -39,7 +40,6 @@ import tptt
 
 # Global
 api = HfApi()
-load_dotenv()
 
 DTYPE_SIZE = {
     torch.float32: 4,
@@ -177,6 +177,7 @@ def train(
     liza_callback_mode: str = typer.Option(None, help="Liza callback mode"),
     liza_final_weight: float = typer.Option(None, help="Memory gate weight"),
     model_quantized: bool = typer.Option(None, help="Enable quantization model"),
+    model_attn_implementation: str = typer.Option(None, help="Attn implementation"),
     use_linear_checkpoint: bool = typer.Option(None, help="RAM linear layers"),
     token: str = typer.Option(None, help="HuggingFace token access"),
     max_length: int = typer.Option(None, help="Maximum sequence len tokenization"),
@@ -187,7 +188,7 @@ def train(
     lora_task_type: str = typer.Option(None, help="LoRA task type"),
     lora_dropout: float = typer.Option(None, help="LoRA dropout rate"),
     model_tokenizer: str = typer.Option(None, help="Tokenizer model name"),
-    lora_target_modules: str = typer.Option(None, help="Comma list of LoRA target"),
+    lora_target_modules: str = typer.Option(None, help="LoRA target"),
     max_chunk_size: int = typer.Option(None, help="Maximum chunk size for model"),
     cross_gate_mode: bool = typer.Option(None, help="Whether to use cross gate mode"),
     linear_precision: str = typer.Option(None, help="Linear layer precision"),
@@ -345,7 +346,7 @@ def get_model_trainer(cfg: dict, token: str = None):
         cfg["model_tokenizer"] if cfg["model_tokenizer"] else cfg["model_name"]
     )
     target_modules = (
-        cfg["lora_target_modules"]
+        ast.literal_eval(cfg["lora_target_modules"])
         if cfg["lora_target_modules"]
         else ["q_proj", "k_proj", "v_proj", "o_proj"]
     )
@@ -450,9 +451,12 @@ def get_model_trainer(cfg: dict, token: str = None):
     model = tptt.TpttModel(
         model_config,
         trust_remote_code=True,
+        attn_implementation=cfg.get("model_attn_implementation", "eager"),
         torch_dtype=cfg.get("model_torch_dtype", torch.bfloat16),
         quantization_config=bnb_config,
     )
+
+    print(f"🔥 Model : \n {model}")
 
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
@@ -495,7 +499,8 @@ def get_model_trainer(cfg: dict, token: str = None):
         train_dataset=tokenized_datasets["train"],
         eval_dataset=tokenized_datasets["validation"],
         data_collator=data_collator,
-        tokenizer=tokenizer,
+        # tokenizer=tokenizer,
+        processing_class=tokenizer,
         callbacks=[liza_callback],
     )
 

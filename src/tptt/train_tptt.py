@@ -115,7 +115,7 @@ class LiZACallback(TrainerCallback):
         if mag_weight is not None and logs is not None:
             logs["mag_weight"] = float(mag_weight)
         if disable_linear_attn is not None and logs is not None:
-            logs["disable_linear_attn"] = not bool(disable_linear_attn)
+            logs["disable_linear_attn"] = bool(disable_linear_attn)
 
 
 def ensure_int(value: Union[int, tuple, list]) -> int:

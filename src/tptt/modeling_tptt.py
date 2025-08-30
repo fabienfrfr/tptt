@@ -312,6 +312,7 @@ class LiZAttention(nn.Module):
             self.head_dim,
             self.num_key_value_heads,
             self.num_key_value_groups,
+            self.hidden_dim,
         ) = self._get_attention_parameters(base_attn, base_config)
         self.scaling = self.head_dim**-0.5
 
@@ -321,7 +322,7 @@ class LiZAttention(nn.Module):
             operator_mode=operator_mode,
             use_linear_checkpoint=use_linear_checkpoint,
             recurrent_config=recurrent_config,
-            hidden_dim=base_config.hidden_size,
+            hidden_dim=self.hidden_dim,
             num_heads=self.num_heads,
             head_dim=self.head_dim,
             num_key_value_heads=self.num_key_value_heads,
@@ -364,11 +365,13 @@ class LiZAttention(nn.Module):
         num_key_value_groups = getattr(base_attn, "num_key_value_groups", None) or (
             num_heads // num_key_value_heads if num_heads and num_key_value_heads else 1
         )
+        hidden_dim = getattr(base_config, "hidden_size", None) or head_dim * num_heads
         return (
             num_heads,
             head_dim,
             num_key_value_heads,
             num_key_value_groups,
+            hidden_dim,
         )
 
     def _apply_shared_projections(
@@ -557,6 +560,11 @@ class LiZAttention(nn.Module):
         if expected_attn_mode == 2:
             return out, attn_weights
         return out
+
+    @property
+    def is_sliding(self):
+        """Check if the base attention contain sliding window attention."""
+        return getattr(self.base_attn, "is_sliding", False)
 
 
 def load_tptt_safetensors(

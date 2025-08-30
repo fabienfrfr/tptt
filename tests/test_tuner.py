@@ -95,8 +95,8 @@ def test_on_log_disable_linear_attn_logged():
 
     logs = {}
     callback.on_log(None, None, None, logs)
-    # Should log the inverse (not True => False)
-    assert logs["disable_linear_attn"] is False
+    # Should log the inverse (not True => False) --> fixed
+    assert logs["disable_linear_attn"] is True
 
 
 def test_ensure_int_handles_tensor_like():
