@@ -105,6 +105,12 @@ Some `scripts` are available [here](./scripts/)
 
 ---
 
+### Results examples
+
+![plot](./docs/plot.png)
+
+More détails in paper.
+
 ## Development
 
 - Code is organized into modular components under the `src/tptt` directory.
