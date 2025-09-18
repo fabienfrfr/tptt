@@ -85,8 +85,7 @@
 </li>
 <li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.configuration_tptt.convert_sets_to_lists"><code class="docutils literal notranslate"><span class="pre">convert_sets_to_lists()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.configuration_tptt.generate_model_card"><code class="docutils literal notranslate"><span class="pre">generate_model_card()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.configuration_tptt.get_mode_name"><code class="docutils literal notranslate"><span class="pre">get_mode_name()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.configuration_tptt.parse_mode_name"><code class="docutils literal notranslate"><span class="pre">parse_mode_name()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.configuration_tptt.get_model_name"><code class="docutils literal notranslate"><span class="pre">get_model_name()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.configuration_tptt.render_template"><code class="docutils literal notranslate"><span class="pre">render_template()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.configuration_tptt.write_model_card"><code class="docutils literal notranslate"><span class="pre">write_model_card()</span></code></a></li>
 </ul>
@@ -107,15 +106,18 @@
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.LinearAttention"><code class="docutils literal notranslate"><span class="pre">LinearAttention</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.LinearAttention.compute_extended_householder"><code class="docutils literal notranslate"><span class="pre">LinearAttention.compute_extended_householder()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.LinearAttention.compute_gate"><code class="docutils literal notranslate"><span class="pre">LinearAttention.compute_gate()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.LinearAttention.forward"><code class="docutils literal notranslate"><span class="pre">LinearAttention.forward()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.LinearAttention.get_cache"><code class="docutils literal notranslate"><span class="pre">LinearAttention.get_cache()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.LinearAttention.merge_head_output"><code class="docutils literal notranslate"><span class="pre">LinearAttention.merge_head_output()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.LinearAttention.prepare_attention_input"><code class="docutils literal notranslate"><span class="pre">LinearAttention.prepare_attention_input()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.LinearAttention.save_cache"><code class="docutils literal notranslate"><span class="pre">LinearAttention.save_cache()</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.LinearAttentionOp"><code class="docutils literal notranslate"><span class="pre">LinearAttentionOp</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.LinearAttentionOp.chunk_delta_product_forward"><code class="docutils literal notranslate"><span class="pre">LinearAttentionOp.chunk_delta_product_forward()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.LinearAttentionOp.compute_gate"><code class="docutils literal notranslate"><span class="pre">LinearAttentionOp.compute_gate()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.LinearAttentionOp.forward"><code class="docutils literal notranslate"><span class="pre">LinearAttentionOp.forward()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.LinearAttentionOp.get_cache"><code class="docutils literal notranslate"><span class="pre">LinearAttentionOp.get_cache()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.LinearAttentionOp.save_cache"><code class="docutils literal notranslate"><span class="pre">LinearAttentionOp.save_cache()</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.TpttModel"><code class="docutils literal notranslate"><span class="pre">TpttModel</span></code></a><ul>
@@ -127,13 +129,15 @@
 <li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.TpttModel.save_pretrained"><code class="docutils literal notranslate"><span class="pre">TpttModel.save_pretrained()</span></code></a></li>
 </ul>
 </li>
+<li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.VirtualTokenExpander"><code class="docutils literal notranslate"><span class="pre">VirtualTokenExpander</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.VirtualTokenExpander.forward"><code class="docutils literal notranslate"><span class="pre">VirtualTokenExpander.forward()</span></code></a></li>
+</ul>
+</li>
 <li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.apply_linear_attention_mask"><code class="docutils literal notranslate"><span class="pre">apply_linear_attention_mask()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.chunk_sequence"><code class="docutils literal notranslate"><span class="pre">chunk_sequence()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.construct_causal_forward_solver"><code class="docutils literal notranslate"><span class="pre">construct_causal_forward_solver()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.describe"><code class="docutils literal notranslate"><span class="pre">describe()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.ensure_stability"><code class="docutils literal notranslate"><span class="pre">ensure_stability()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.expand_virtual_tokens"><code class="docutils literal notranslate"><span class="pre">expand_virtual_tokens()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.extract_layer_idx"><code class="docutils literal notranslate"><span class="pre">extract_layer_idx()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.fast_invert_matrix"><code class="docutils literal notranslate"><span class="pre">fast_invert_matrix()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.find_embedding_lm"><code class="docutils literal notranslate"><span class="pre">find_embedding_lm()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.get_tptt_model"><code class="docutils literal notranslate"><span class="pre">get_tptt_model()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.modeling_tptt.get_valid_chunk_size"><code class="docutils literal notranslate"><span class="pre">get_valid_chunk_size()</span></code></a></li>
@@ -162,6 +166,10 @@
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="tptt.html#module-tptt">Module contents</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.CausalAvgPool1d"><code class="docutils literal notranslate"><span class="pre">CausalAvgPool1d</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.CausalAvgPool1d.forward"><code class="docutils literal notranslate"><span class="pre">CausalAvgPool1d.forward()</span></code></a></li>
+</ul>
+</li>
 <li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.LCache"><code class="docutils literal notranslate"><span class="pre">LCache</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.LCache.reset"><code class="docutils literal notranslate"><span class="pre">LCache.reset()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.LCache.update"><code class="docutils literal notranslate"><span class="pre">LCache.update()</span></code></a></li>
@@ -178,15 +186,18 @@
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.LinearAttention"><code class="docutils literal notranslate"><span class="pre">LinearAttention</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.LinearAttention.compute_extended_householder"><code class="docutils literal notranslate"><span class="pre">LinearAttention.compute_extended_householder()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.LinearAttention.compute_gate"><code class="docutils literal notranslate"><span class="pre">LinearAttention.compute_gate()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.LinearAttention.forward"><code class="docutils literal notranslate"><span class="pre">LinearAttention.forward()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.LinearAttention.get_cache"><code class="docutils literal notranslate"><span class="pre">LinearAttention.get_cache()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.LinearAttention.merge_head_output"><code class="docutils literal notranslate"><span class="pre">LinearAttention.merge_head_output()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.LinearAttention.prepare_attention_input"><code class="docutils literal notranslate"><span class="pre">LinearAttention.prepare_attention_input()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.LinearAttention.save_cache"><code class="docutils literal notranslate"><span class="pre">LinearAttention.save_cache()</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.LinearAttentionOp"><code class="docutils literal notranslate"><span class="pre">LinearAttentionOp</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.LinearAttentionOp.chunk_delta_product_forward"><code class="docutils literal notranslate"><span class="pre">LinearAttentionOp.chunk_delta_product_forward()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.LinearAttentionOp.compute_gate"><code class="docutils literal notranslate"><span class="pre">LinearAttentionOp.compute_gate()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.LinearAttentionOp.forward"><code class="docutils literal notranslate"><span class="pre">LinearAttentionOp.forward()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.LinearAttentionOp.get_cache"><code class="docutils literal notranslate"><span class="pre">LinearAttentionOp.get_cache()</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.LinearAttentionOp.save_cache"><code class="docutils literal notranslate"><span class="pre">LinearAttentionOp.save_cache()</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.SaveBestModelCallback"><code class="docutils literal notranslate"><span class="pre">SaveBestModelCallback</span></code></a><ul>
@@ -209,10 +220,13 @@
 <li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.TpttModel.save_pretrained"><code class="docutils literal notranslate"><span class="pre">TpttModel.save_pretrained()</span></code></a></li>
 </ul>
 </li>
+<li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.VirtualTokenExpander"><code class="docutils literal notranslate"><span class="pre">VirtualTokenExpander</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="tptt.html#tptt.VirtualTokenExpander.forward"><code class="docutils literal notranslate"><span class="pre">VirtualTokenExpander.forward()</span></code></a></li>
+</ul>
+</li>
 <li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.generate_model_card"><code class="docutils literal notranslate"><span class="pre">generate_model_card()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.get_tptt_model"><code class="docutils literal notranslate"><span class="pre">get_tptt_model()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.load_tptt_safetensors"><code class="docutils literal notranslate"><span class="pre">load_tptt_safetensors()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.parse_mode_name"><code class="docutils literal notranslate"><span class="pre">parse_mode_name()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="tptt.html#tptt.save_tptt_safetensors"><code class="docutils literal notranslate"><span class="pre">save_tptt_safetensors()</span></code></a></li>
 </ul>
 </li>
