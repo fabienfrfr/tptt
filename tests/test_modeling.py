@@ -262,6 +262,7 @@ def test_apply_mag_classic(monkeypatch):
     class DummyLiz:
         mag_weight = 0.6
         cross_gate = False
+        force_stable = False
 
     liz = DummyLiz()
     # simulate padding, last dim as features

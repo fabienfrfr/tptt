@@ -61,7 +61,7 @@
 \begin{abstract}
     \textbf{Background:} Transformer-based large language models (LLMs) have achieved strong performance across many natural language processing tasks. Nonetheless, their quadratic computational and memory requirements, particularly in self-attention layers, pose challenges for efficient inference on long contexts and for deployment in resource-limited environments.
 
-    \textbf{Methods:} We present TPTT (Transforming Pretrained Transformers into Titans), a framework designed to augment pretrained Transformers with linearized attention and internal memory gating via Memory as Gate (MaG), applied without full retraining. TPTT supports parameter-efficient fine-tuning (LoRA) and integrates with standard toolkits such as Hugging Face Transformers. We evaluated TPTT on several pretrained models, including Llama-1B, OlMoE-1B-7B, Qwen2.5-1.5B, Gemma3-270m, OpenELM-1.3B, and Mistral-7B, in order to assess applicability across architectures of different scales.
+    \textbf{Methods:} We present TPTT (Transforming Pretrained Transformers into Titans), a framework designed to augment pretrained Transformers with linearized attention (LiZA) and internal memory gating via Memory as Gate (MaG), applied without full retraining. TPTT supports parameter-efficient fine-tuning (LoRA) and integrates with standard toolkits such as Hugging Face Transformers. We evaluated TPTT on several pretrained models, including Llama-1B, OlMoE-1B-7B, Qwen2.5-1.5B, Gemma3-270m, OpenELM-1.3B, and Mistral-7B, in order to assess applicability across architectures of different scales.
 
     \textbf{Results:} Experiments on models with approximately 1 billion parameters, evaluated primarily on the MMLU benchmark, suggest potential improvements in both efficiency and accuracy compared to baseline models. For example, Titans-Llama-1B exhibited up to a 20\% relative increase in Exact Match scores in one-shot evaluation. An additional finding is that it is possible to convert a quadratic-attention model into a purely linear-attention model using the DeltaProduct mechanism. All training runs were carried out with modest computational resources.
 
@@ -158,17 +158,17 @@ Here $\{q_i,k_i,v_i\}$ denotes the normalized queries, keys, and values; $\{\bet
 \subsection{Memory as Gate (MaG)}
 To further improve modeling of long-range dependencies, we introduce \textit{Memory as Gate} (MaG), an internal memory augmentation mechanism inspired by Titans~\cite{behrouz2024titans}. MaG enables the model to dynamically combine the strengths of linearized and softmax attention, adapting to the context and sequence characteristics. Given the outputs of linearized attention $\mathbf{O}_{\text{lin}}$ and softmax attention $\mathbf{O}_{\text{base}}$, MaG computes the final attention output through two possible strategies:
 \begin{enumerate}
-    \item \textbf{Gated Mixing:} A learnable parameter $\alpha$ is broadcast to match the attention tensor shapes. The outputs are combined as:
+    \item \textbf{Gated Mixing:} A learnable parameter $\mu$ is broadcast to match the attention tensor shapes. The outputs are combined as:
     \begin{equation}
-        \mathbf{O}_{\text{MaG}} = (1-\alpha) \cdot \mathbf{O}_{\text{base}} + \alpha \cdot \mathbf{O}_{\text{lin}} .
+        \mathbf{O}_{\text{MaG}} = (1-\mu) \cdot \mathbf{O}_{\text{base}} + \mu \cdot \mathbf{O}_{\text{lin}} .
     \end{equation}
     \item \textbf{Cross-Gate Mixing:} Optionally, MaG can introduce a nonlinear interaction term between the two attention outputs:
     \begin{equation}
-        \mathbf{O}_{\text{MaG}} = (1-\alpha) \cdot \mathbf{O}_{\text{base}} + \alpha \cdot \mathbf{O}_{\text{lin}} + \left[(1-\alpha) \cdot \mathbf{O}_{\text{base}}\right] \odot \left[\alpha \cdot \mathbf{O}_{\text{lin}}\right] .
+        \mathbf{O}_{\text{MaG}} = (1-\mu) \cdot \mathbf{O}_{\text{base}} + \mu \cdot \mathbf{O}_{\text{lin}} + \left[(1-\mu) \cdot \mathbf{O}_{\text{base}}\right] \odot \left[\mu \cdot \mathbf{O}_{\text{lin}}\right] .
     \end{equation}
 \end{enumerate}
 
-Here, $\alpha \in [0,1]$ controls the mixing ratio between softmax and linearized attention, and $\odot$ denotes elementwise multiplication. While $\alpha$ could in principle be defined as a learnable parameter (e.g., per-layer or per-head), in our experiments it was not optimized by backpropagation. Instead, $\alpha$ was scheduled externally during training via the LiZA callback (see Sec.~\ref{sec:training}). This design avoids introducing new trainable parameters while still allowing the model to progressively adjust the balance between efficiency and expressivity. The gating mechanism can thus be interpreted as a form of memory-augmented control, where the reliance on linearized versus softmax attention evolves according to the training schedule and input context.
+Here, $\mu \in [0,1]$ controls the mixing ratio between softmax and linearized attention, and $\odot$ denotes elementwise multiplication. While $\mu$ could in principle be defined as a learnable parameter (e.g., per-layer or per-head), in our experiments it was not optimized by backpropagation. Instead, $\mu$ was scheduled externally during training via the LiZA callback (see Sec.~\ref{sec:training}). This design avoids introducing new trainable parameters while still allowing the model to progressively adjust the balance between efficiency and expressivity. The gating mechanism can thus be interpreted as a form of memory-augmented control, where the reliance on linearized versus softmax attention evolves according to the training schedule and input context.
 
 %----------------------------------------
 \subsection{Parallel Delta Product Modeling}
@@ -182,7 +182,7 @@ We leverage the \textbf{DeltaProduct} operator as the feature mapping $\phi$ wit
 
 The classical Delta rule for associative memory updates the state matrix $\mathbf{S}_t \in \mathbb{R}^{d \times d}$ at time $t$ as:
 \begin{align}
-    \mathbf{S}_t &= \mathbf{S}_{t-1} \left(\mathbf{I}  - \beta_t \mathbf{k}_t  \mathbf{k}_t^\top \right) + \beta_t \mathbf{v}_t \mathbf{k}_t^\top \\
+    \mathbf{S}_t &= \mathbf{S}_{t-1} + \Phi(\beta_t, \mathbf{k}_t,\mathbf{v}_t)  \\
     &= \mathbf{S}_{t-1} + \beta_t \left( \mathbf{v}_t - \mathbf{S}_{t-1} \mathbf{k}_t \right) \mathbf{k}_t^\top
     \label{eq:deltarule}
 \end{align}
@@ -239,13 +239,19 @@ This expansion reveals that DeltaProduct’s transition matrix is a product of $
 \paragraph{Chunkwise DeltaProduct Update.}
 
 For a chunk of $C$ real tokens (expanded to $N = n_h C$ virtual tokens), the parallel state update is:
+
 \begin{align}
-    \mathbf{T}_n &= \mathbf{I}_N - \mathrm{tril}\left((\mathbf{K}_n \odot \boldsymbol{\beta}_n) \mathbf{K}_n^\top, -1\right) \label{eq:triangular-nh} \\
-    \mathbf{U}_n &= \mathbf{V}_n \odot \boldsymbol{\beta}_n - (\mathbf{K}_n \odot \boldsymbol{\beta}_n) \mathbf{S}_{\mathrm{in}} \\
-    \mathbf{y}_n &= \mathbf{T}_n^{-1} \mathbf{U}_n \\
-    \mathbf{S}_{[t,\,t+C-1]} &= \mathbf{S}_{\mathrm{in}} + \mathbf{K}_n^\top \mathbf{y}_n
+    \mathbf{T}_n &= \mathbf{I}_N - \mathrm{tril}\!\Big( (\mathbf{K}_n \odot \boldsymbol{\beta}_n)\,\mathbf{K}_n^\top , -1 \Big) \\[4pt]
+    \mathbf{w}_n &= \mathbf{T}_n^{-1} (\mathbf{K}_n \odot \boldsymbol{\beta}_n), 
+    \qquad
+    \mathbf{u}_n = \mathbf{T}_n^{-1} (\mathbf{V}_n \odot \boldsymbol{\beta}_n) \\[6pt]
+    \mathbf{H}_{i,0} &= \mathbf{S}_{\mathrm{in}} \\[4pt]
+    \mathbf{H}_{i,j} &= \mathbf{H}_{i,j-1} + \mathbf{w}_{i,j}\,\mathbf{u}_{i,j}^\top,
+    \qquad j=1,\ldots,n_h \\[4pt]
+    \mathbf{S}_{[t,\,t+C-1]} &= \mathbf{H}_{i,n_h}
     \label{eq:chunk-deltaproduct}
 \end{align}
+
 where $\mathbf{K}_n, \mathbf{V}_n \in \mathbb{R}^{N \times d}$ and $\boldsymbol{\beta}_n \in \mathbb{R}^{N \times 1}$ are the keys, values, and gates for all virtual tokens in the chunk, and $\mathbf{S}_{\mathrm{in}}$ is the initial state for the chunk (typically the last state of the previous chunk).
 
 
@@ -274,6 +280,18 @@ Optionally, a nonlinearity $\phi$ (e.g., GELU, tanh) can be applied to the state
 \end{equation}
 This is controlled by a flag in the implementation and can improve model capacity and stability.
 
+\paragraph{Pure Gating.}
+
+Is possible to applie gating in previous state like Gated DeltaNet~\cite{siems2025deltaproduct}:
+
+\begin{align}
+    \mathbf{S}_t &= \Psi(\alpha_t, \mathbf{S}_{t-1}) + \Phi(\beta_t, \mathbf{k}_t,\mathbf{v}_t)  \\
+    &= \alpha_t \mathbf{S}_{t-1} + \Phi(\beta_t, \mathbf{k}_t,\mathbf{v}_t)
+    \label{eq:gateddelta}
+\end{align}
+
+More detailed implementation and ablation of this feature will be provided in future work.
+
 \paragraph{Expressivity and Efficiency.}
 
 By increasing the order $n$, DeltaProduct interpolates between the original DeltaNet ($n=1$) and a dense state transition. Notably, DeltaProduct of order $n=2$ achieves a level of expressivity comparable to the Titans model and can solve algorithmic problems beyond the class $\mathrm{TC}^0$ (such as parity)~\cite{siems2025deltaproduct, merrill2024illusion}. This is in contrast to diagonal or single-rank updates, which are fundamentally limited in this regard. DeltaProduct thus provides a tunable trade-off between efficiency and expressivity, while retaining the hardware efficiency of the chunkwise parallel algorithm.
@@ -285,7 +303,7 @@ Our framework modifies pretrained Transformer models by injecting linearized att
 
 \subsection{LiZAttention Module}
 
-The \texttt{LiZAttention} operator represents the core architectural modification introduced by TPTT. It implements a dual-path attention mechanism that combines (i) standard softmax attention to retain expressivity and (ii) a computationally efficient linearized variant that scales to longer sequences. A gating coefficient $\alpha$, learned during fine-tuning, adaptively reweights these contributions at inference time.
+The \texttt{LiZAttention} operator represents the core architectural modification introduced by TPTT. It implements a dual-path attention mechanism that combines (i) standard softmax attention to retain expressivity and (ii) a computationally efficient linearized variant that scales to longer sequences. A gating coefficient $\mu$, learned during fine-tuning, adaptively reweights these contributions at inference time.
 
 To further minimize overhead, projection matrices may optionally share parameters across the two branches, ensuring that Q, K, V, and O projections are reused between softmax and linearized attention. This reduces memory footprint without substantially impacting representational capacity.
 
@@ -306,9 +324,9 @@ Intermediate states are cached for reuse across forward passes.
 \begin{equation*}
 o_{\mathrm{base}} = \text{Softmax}\left(\frac{q k^\top}{\sqrt{d_h}}\right) v.
 \end{equation*}
-\State \textbf{Gating (MaG):} Combine both outputs using a learnable coefficient $\alpha \in [0,1]$,
+\State \textbf{Gating (MaG):} Combine both outputs using a learnable coefficient $\mu \in [0,1]$,
 \begin{equation*}
-o = \alpha \, o_{\mathrm{lin}} + (1-\alpha) \, o_{\mathrm{base}}.
+o = \mu \, o_{\mathrm{lin}} + (1-\mu) \, o_{\mathrm{base}}.
 \end{equation*}
 \State \Return $o \in \mathbb{R}^{B \times L \times D}$
 \end{algorithmic}
@@ -326,16 +344,16 @@ The caching strategy thus ensures that attention computations scale linearly wit
 
 \subsection{Parameter-Efficient Fine-Tuning with LoRA}
 
-To adapt pretrained Transformer models augmented with TPTT components, we employ Low-Rank Adaptation (LoRA)~\cite{hu2022lora, lora_hf}, a parameter-efficient fine-tuning method. LoRA introduces trainable low-rank matrices into selected projection layers while freezing the original pretrained weights, thereby substantially reducing the number of trainable parameters and lowering memory consumption during training. In our experiments, unless specified otherwise, LoRA is configured with rank 8, a scaling factor \(\alpha=16\), and a dropout rate of 0.05. The adaptation is applied to primary projection modules, namely \texttt{[q\_proj, k\_proj, v\_proj, o\_proj]} for Llama and Mistral architectures, and \texttt{[qkv\_proj, out\_proj]} for OpenELM. For comparison, we also consider a setting where only the projection matrices are made trainable without applying LoRA updates (denoted LoRA\(-\)).
+To adapt pretrained Transformer models augmented with TPTT components, we employ Low-Rank Adaptation (LoRA)~\cite{hu2022lora, lora_hf}, a parameter-efficient fine-tuning method. LoRA introduces trainable low-rank matrices into selected projection layers while freezing the original pretrained weights, thereby substantially reducing the number of trainable parameters and lowering memory consumption during training. In our experiments, unless specified otherwise, LoRA is configured with rank 8, a scaling factor \(\mu=16\), and a dropout rate of 0.05. The adaptation is applied to primary projection modules, namely \texttt{[q\_proj, k\_proj, v\_proj, o\_proj]} for Llama and Mistral architectures, and \texttt{[qkv\_proj, out\_proj]} for OpenELM. For comparison, we also consider a setting where only the projection matrices are made trainable without applying LoRA updates (denoted LoRA\(-\)).
 
 \subsection{Dynamic Memory as Gate Scheduling (LiZA Callback)}
 
-An important component of our training procedure is the LiZA callback, which dynamically controls the Memory as Gate (MaG) weighting parameter \(\alpha\) during training. We consider three main scheduling strategies for \(\alpha\), each providing different mechanisms to balance the contributions of softmax and linearized attention:
+An important component of our training procedure is the LiZA callback, which dynamically controls the Memory as Gate (MaG) weighting parameter \(\mu\) during training. We consider three main scheduling strategies for \(\mu\), each providing different mechanisms to balance the contributions of softmax and linearized attention:
 
 \begin{itemize}
-    \item \textbf{Constant scheduling:} \(\alpha\) remains fixed at a preset value throughout training, such as 0.125, 0.5, or 1.0. This maintains a steady fixed balance between the two attention mechanisms.
-    \item \textbf{Gradual scheduling:} \(\alpha\) starts from a small initial value (e.g., 0.01) and increases linearly to a target value (commonly 0.5) over a predefined number of initial training steps (e.g., first 100 steps). This enables a smooth transition from predominantly softmax attention to more reliance on linearized attention, potentially enhancing training stability and convergence.
-    \item \textbf{Cyclic scheduling:} \(\alpha\) cycles periodically through a set of discrete values (e.g., 0, 0.5, and 1.0) during training, allowing the model to alternate phase-wise between different attentional emphases.
+    \item \textbf{Constant scheduling:} \(\mu\) remains fixed at a preset value throughout training, such as 0.125, 0.5, or 1.0. This maintains a steady fixed balance between the two attention mechanisms.
+    \item \textbf{Gradual scheduling:} \(\mu\) starts from a small initial value (e.g., 0.01) and increases linearly to a target value (commonly 0.5) over a predefined number of initial training steps (e.g., first 100 steps). This enables a smooth transition from predominantly softmax attention to more reliance on linearized attention, potentially enhancing training stability and convergence.
+    \item \textbf{Cyclic scheduling:} \(\mu\) cycles periodically through a set of discrete values (e.g., 0, 0.5, and 1.0) during training, allowing the model to alternate phase-wise between different attentional emphases.
 \end{itemize}
 
 These three cases provide complementary approaches to control the trade-off between efficiency and expressivity during fine-tuning.
@@ -351,7 +369,7 @@ To comprehensively evaluate the effects of different architectural and training 
     \item \textbf{Virtual token expansion strategies:} These include the “derivative trick” (\(\Delta\)), which computes finite difference approximations of input sequences, and the “rotary trick” (\(\Theta\)), which applies rotational embeddings. Variants combining both (\(\Delta,\Theta\)) were also tested, enhancing the feature representations sent into the memory updates.
     \item \textbf{Nonlinearity between chunks:} Some models include a nonlinear activation function such as GELU applied after chunk-wise state updates to improve model capacity and stabilization.
     \item \textbf{Fine-tuning approach:} Variants trained either with parameter-efficient Low-Rank Adaptation (LoRA) or without LoRA (denoted LoRA\(-\)) to assess adaptability and parameter efficiency impacts.
-    \item \textbf{MaG weight scheduling \(\alpha\):} We compared constant \(\alpha\) values, a gradual linear increase schedule, and cyclic schedules where \(\alpha\) periodically varies among discrete levels to probe different balances between softmax and linearized attention during training.
+    \item \textbf{MaG weight scheduling \(\mu\):} We compared constant \(\mu\) values, a gradual linear increase schedule, and cyclic schedules where \(\mu\) periodically varies among discrete levels to probe different balances between softmax and linearized attention during training.
 \end{itemize}
 
 This diversity captures important axes influencing model behavior in long-context attention and memory management. The following table summarizes these principal configurations, facilitating interpretation of related training results and curve labels, often formatted as \texttt{Model::LiZA(parameters)}, where “parameters” encode the above characteristics.
@@ -363,21 +381,21 @@ This diversity captures important axes influencing model behavior in long-contex
 \hline
 \textbf{Parameters Description} & \textbf{Details} \\
 \hline
-$k$, $+$, $n_h=1$, $\alpha=0.5$ & MaG gating using \(\beta(k)\) scalar, additive combination, single Householder (Delta Rule), constant \(\alpha=0.5\) \\
-$k$, GELU, $n_h=1$, $\alpha=0.5$ & Gating with \(\beta(k)\), GELU activation between chunks, single Householder, constant \(\alpha=0.5\) \\
-$\Delta$, $k$, $+$, $n_h=2$, $\alpha=0.5$ & Derivative trick, additive MaG, two Householder projections, constant \(\alpha=0.5\) \\
-$v$, $+$, $n_h=1$, $\alpha=0.5$ & Gating with \(\beta(v)\), additive MaG, one Householder, constant \(\alpha=0.5\) \\
-$(k,v)$, $+$, $n_h=1$, $\alpha=0.5$ & Gating with product \(\beta(k) \times \beta(v)\), additive MaG, one Householder, constant \(\alpha=0.5\) \\
-$\Theta$, $k$, $+$, $n_h=2$, $\alpha=0.5$ & Rotary trick virtual tokens, gating \(\beta(k)\), additive MaG, two Householder, constant \(\alpha=0.5\) \\
-$(\Delta,\Theta)$, $k$, $+$, $n_h=2$, $\alpha=0.5$ & Combination of derivative and rotary tricks, gating \(\beta(k)\), additive MaG, two Householder updates, constant \(\alpha=0.5\) \\
-$(\Delta,\Theta)$, $k$, $+$, $n_h=2$, $\alpha=1.0$ & Same combined tricks, full reliance on linear attention (\(\alpha=1.0\)) \\
-$\Delta$, $k$, $+$, $n_h=2$, $\alpha=0.5$, LoRA$-$ & As above without LoRA fine-tuning (frozen pretrained weights except projections), constant \(\alpha=0.5\) \\
-$\Delta$, $k$, $\odot$, $n_h=2$, $\alpha=0.5$ & Derivative trick with cross-gate mixing (elementwise product), gating \(\beta(k)\), two Householder, constant \(\alpha=0.5\) \\
-$\Delta$, $k$, $+$, $n_h=2$, $\alpha$ $\in [0,0.5]$ & Derivative trick, additive MaG, two Householder, gradual linear increase of \(\alpha\) from 0 to 0.5 during training \\
-$\Delta$, $k$, $+$, $n_h=2$, $\alpha$ $\in \{0, 0.5, 1.0\}$ & Derivative trick, additive MaG, two Householder, cyclic \(\alpha\) switching among \{0, 0.5, 1.0\} during training \\
-$k$, $+$, $n_h=1$, $\alpha=0.125$ & MaG gating \(\beta(k)\), additive, single Householder, constant low \(\alpha=0.125\) \\
-$\Delta$, $k$, $+$, $n_h=2$, $\alpha=0.125$ & Derivative trick, additive MaG, two Householder, constant low \(\alpha=0.125\) \\
-$\Delta$, $k$, $+$, $n_h=2$, $\alpha=1.0$ & Derivative trick, full linear attention reliance with constant \(\alpha=1.0\) \\
+$k$, $+$, $n_h=1$, $\mu=0.5$ & MaG gating using \(\beta(k)\) scalar, additive combination, single Householder (Delta Rule), constant \(\mu=0.5\) \\
+$k$, GELU, $n_h=1$, $\mu=0.5$ & Gating with \(\beta(k)\), GELU activation between chunks, single Householder, constant \(\mu=0.5\) \\
+$\Delta$, $k$, $+$, $n_h=2$, $\mu=0.5$ & Derivative trick, additive MaG, two Householder projections, constant \(\mu=0.5\) \\
+$v$, $+$, $n_h=1$, $\mu=0.5$ & Gating with \(\beta(v)\), additive MaG, one Householder, constant \(\mu=0.5\) \\
+$(k,v)$, $+$, $n_h=1$, $\mu=0.5$ & Gating with product \(\beta(k) \times \beta(v)\), additive MaG, one Householder, constant \(\mu=0.5\) \\
+$\Theta$, $k$, $+$, $n_h=2$, $\mu=0.5$ & Rotary trick virtual tokens, gating \(\beta(k)\), additive MaG, two Householder, constant \(\mu=0.5\) \\
+$(\Delta,\Theta)$, $k$, $+$, $n_h=2$, $\mu=0.5$ & Combination of derivative and rotary tricks, gating \(\beta(k)\), additive MaG, two Householder updates, constant \(\mu=0.5\) \\
+$(\Delta,\Theta)$, $k$, $+$, $n_h=2$, $\mu=1.0$ & Same combined tricks, full reliance on linear attention (\(\mu=1.0\)) \\
+$\Delta$, $k$, $+$, $n_h=2$, $\mu=0.5$, LoRA$-$ & As above without LoRA fine-tuning (frozen pretrained weights except projections), constant \(\mu=0.5\) \\
+$\Delta$, $k$, $\odot$, $n_h=2$, $\mu=0.5$ & Derivative trick with cross-gate mixing (elementwise product), gating \(\beta(k)\), two Householder, constant \(\mu=0.5\) \\
+$\Delta$, $k$, $+$, $n_h=2$, $\mu$ $\in [0,0.5]$ & Derivative trick, additive MaG, two Householder, gradual linear increase of \(\mu\) from 0 to 0.5 during training \\
+$\Delta$, $k$, $+$, $n_h=2$, $\mu$ $\in \{0, 0.5, 1.0\}$ & Derivative trick, additive MaG, two Householder, cyclic \(\mu\) switching among \{0, 0.5, 1.0\} during training \\
+$k$, $+$, $n_h=1$, $\mu=0.125$ & MaG gating \(\beta(k)\), additive, single Householder, constant low \(\mu=0.125\) \\
+$\Delta$, $k$, $+$, $n_h=2$, $\mu=0.125$ & Derivative trick, additive MaG, two Householder, constant low \(\mu=0.125\) \\
+$\Delta$, $k$, $+$, $n_h=2$, $\mu=1.0$ & Derivative trick, full linear attention reliance with constant \(\mu=1.0\) \\
 \hline
 \end{tabular}
 \caption{Summary of TPTT variants evaluated, indicating gating scalars (\(\beta(k)\), \(\beta(v)\), or their product), MaG combination method, virtual token expansions, Householder update order, nonlinearities, fine-tuning approach, and MaG weighting schedules.}
@@ -427,7 +445,7 @@ Overall, these training results suggest that TPTT can enhance diverse pretrained
 
 \subsection{Analysis of Training Curves}
 
-Figure~\ref{fig:training_curve} illustrates training loss trajectories for multiple TPTT configurations on the Alpaca dataset. The experiments span different model architectures, memory update methods, gating strategies, and schedules for the Memory as Gate (MaG) parameter \(\alpha\).
+Figure~\ref{fig:training_curve} illustrates training loss trajectories for multiple TPTT configurations on the Alpaca dataset. The experiments span different model architectures, memory update methods, gating strategies, and schedules for the Memory as Gate (MaG) parameter \(\mu\).
 
 
 \begin{figure}[ht]
@@ -453,11 +471,11 @@ The comparison between models trained with and without Low-Rank Adaptation (LoRA
 
 \paragraph{Impact of MaG Scheduling}
 
-Analyses of \(\alpha\) scheduling reveal distinct behaviors when separating constant from dynamic schedules:
+Analyses of \(\mu\) scheduling reveal distinct behaviors when separating constant from dynamic schedules:
 
 \begin{itemize}
-    \item Under constant \(\alpha\), lower values such as 0.125 correspond to relatively fast and stable convergence, even with simpler Delta Rule updates (\(n_h=1\)). \textbf{Surprisingly}, a constant \(\alpha\) of 1.0, representing exclusive reliance on linear attention, converges steadily despite the lack of softmax attention, which may indicate that the model can adapt to fully linearized attention given sufficient training.
-    \item Regarding dynamic schedules, gradual increase of \(\alpha\) from 0.01 to 0.5 does not demonstrate clear advantages over a fixed \(\alpha = 0.5\). Cyclic schedules typically yield slightly slower convergence overall but enable faster training of models with \(\alpha=1.0\), potentially offering a useful trade-off between convergence speed and generalization capability.
+    \item Under constant \(\mu\), lower values such as 0.125 correspond to relatively fast and stable convergence, even with simpler Delta Rule updates (\(n_h=1\)). \textbf{Surprisingly}, a constant \(\mu\) of 1.0, representing exclusive reliance on linear attention, converges steadily despite the lack of softmax attention, which may indicate that the model can adapt to fully linearized attention given sufficient training.
+    \item Regarding dynamic schedules, gradual increase of \(\mu\) from 0.01 to 0.5 does not demonstrate clear advantages over a fixed \(\mu = 0.5\). Cyclic schedules typically yield slightly slower convergence overall but enable faster training of models with \(\mu=1.0\), potentially offering a useful trade-off between convergence speed and generalization capability.
 \end{itemize}
 
 \paragraph{Gating Strategy Comparisons}
@@ -466,7 +484,7 @@ Comparisons among gating on keys \(\beta(k)\), values \(\beta(v)\), or their pro
 
 \paragraph{Generalization Across Architectures and Model Sizes}
 
-Training loss behaviors are consistent across diverse pretrained architectures including \texttt{Olmo}, \texttt{OpenELM}, \texttt{Qwen}, \texttt{Gemma}, and larger models like \texttt{Mistral} and \texttt{OlmoE}, all evaluated with DeltaProduct and \(\alpha=0.5\). Larger models generally attain lower loss values, consistent with their increased capacity, while smaller models converge less rapidly. These results suggest the TPTT framework is adaptable and stable across a range of model sizes and architectures.
+Training loss behaviors are consistent across diverse pretrained architectures including \texttt{Olmo}, \texttt{OpenELM}, \texttt{Qwen}, \texttt{Gemma}, and larger models like \texttt{Mistral} and \texttt{OlmoE}, all evaluated with DeltaProduct and \(\mu=0.5\). Larger models generally attain lower loss values, consistent with their increased capacity, while smaller models converge less rapidly. These results suggest the TPTT framework is adaptable and stable across a range of model sizes and architectures.
 
 
 \subsection{Evaluation Metrics and Benchmark Results}

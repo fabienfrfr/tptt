@@ -10,8 +10,13 @@ from torch import nn
 from transformers import AutoTokenizer, PretrainedConfig, PreTrainedModel
 
 from src.tptt.configuration_tptt import TpttConfig
-from src.tptt.modeling_tptt import (LCache, LinearAttention, LinearAttentionOp,
-                                    LiZAttention, TpttModel)
+from src.tptt.modeling_tptt import (
+    LCache,
+    LinearAttention,
+    LinearAttentionOp,
+    LiZAttention,
+    TpttModel,
+)
 
 
 @pytest.fixture
@@ -81,16 +86,29 @@ def tensor_dim(head_dim, num_heads):
 
 
 @pytest.fixture
-def random_qkv_tensors(batch_size, num_heads, seq_len, head_dim):
-    """Fixture for random Q, K, V, beta tensors."""
-    q = torch.randn(batch_size, num_heads, seq_len, head_dim)
-    k = torch.randn(batch_size, num_heads, seq_len, head_dim)
-    v = torch.randn(batch_size, num_heads, seq_len, head_dim)
-    beta = (
-        torch.randn(batch_size, num_heads, seq_len, head_dim),
-        torch.randn(batch_size, num_heads, seq_len, head_dim),
-    )
-    return q, k, v, beta
+def random_qkv_tensors(attention_dims):
+    """Generate random q, k, v tensors and two beta tensors (tuple)."""
+    batch_size, num_head, seq_len, head_dim = attention_dims.values()
+    q = torch.randn(batch_size, num_head, seq_len, head_dim)
+    k = torch.randn(batch_size, num_head, seq_len, head_dim)
+    v = torch.randn(batch_size, num_head, seq_len, head_dim)
+    alpha = torch.ones(batch_size, num_head, seq_len, 1)  # head_dim ?
+    beta = torch.sigmoid(torch.randn(batch_size, num_head, seq_len, 1))  # head_dim ?
+    return (q, k, v, alpha, beta)
+
+
+@pytest.fixture
+def random_qkv_expended_tensors(attention_dims):
+    """Generate expanded random q, k, v tensors and two beta tensors (tuple)."""
+    batch_size, num_head, seq_len, head_dim = attention_dims.values()
+    n_orders = 2
+    q = torch.randn(batch_size, num_head, seq_len, n_orders, head_dim)
+    k = torch.randn(batch_size, num_head, seq_len, n_orders, head_dim)
+    v = torch.randn(batch_size, num_head, seq_len, n_orders, head_dim)
+    # no head_dim for alpha/beta in expanded mode (not mandatory ?)
+    alpha = torch.ones(batch_size, num_head, seq_len, n_orders, 1)
+    beta = torch.sigmoid(torch.randn(batch_size, num_head, seq_len, n_orders, 1))
+    return (q, k, v, alpha, beta)
 
 
 @pytest.fixture
@@ -108,12 +126,6 @@ def attention_mask(random_hidden_tensor, seq_len, batch_size):
         dtype=random_hidden_tensor.dtype,
         device=random_hidden_tensor.device,
     )
-
-
-@pytest.fixture
-def operator():
-    """Fixture for AttentionOperator instance."""
-    return LinearAttentionOp(layer_idx=1, operator_mode="delta_rule")
 
 
 @pytest.fixture
@@ -326,6 +338,29 @@ def dummy_pipeline_components():
 
 
 @pytest.fixture
+def deltarule_attention():
+    """minimal deltarule attention"""
+    hidden_dim = 32
+    num_heads = 4
+    recurrent_config = {
+        "order": 1,
+        "alpha_gate": "c",
+        "beta_gate": "k",
+        "linear": True,
+        "trick": "cte",
+    }
+    attn = LinearAttention(
+        hidden_dim=hidden_dim,
+        num_heads=num_heads,
+        num_key_value_heads=num_heads,
+        dropout=0.0,
+        padding_side="right",
+        recurrent_config=recurrent_config,
+    )
+    return attn
+
+
+@pytest.fixture
 def linear_attention():
     """minimal linear attention"""
     hidden_dim = 32
@@ -386,4 +421,36 @@ def patch_ensure_stability(monkeypatch):
     monkeypatch.setattr(
         "src.tptt.modeling_tptt.ensure_stability",
         lambda x, **kwargs: x,
+    )
+
+
+@pytest.fixture
+def attention_dims():
+    """Return dimension dict: batch, num_head, seq_len, head_dim."""
+    return dict(batch=2, num_heads=3, seq_len=12, head_dim=8)
+
+
+@pytest.fixture
+def dummy_cache():
+    """Simple dict-like cache compatible with LinearAttentionOp."""
+
+    class DummyCache(dict):
+        def update(self, key, recurrent_state=None, qkvg=None):
+            entry = {"recurrent_state": recurrent_state}
+            if qkvg is not None:
+                entry["qkvg"] = qkvg
+            self[key] = entry
+
+        def __getitem__(self, key):
+            return dict.get(self, key, None)
+
+    return DummyCache()
+
+
+@pytest.fixture
+def linear_operator():
+    """A default LinearAttentionOp with quadratic operator and working cache."""
+    return LinearAttentionOp(
+        max_chunk_size=6,
+        linear_precision=torch.float32,
     )

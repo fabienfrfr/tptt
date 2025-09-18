@@ -57,7 +57,7 @@ python train.py train --model_name MODEL_NAME --method delta_product --mag_weigh
 ```
 
 Replace `MODEL_NAME` with one of:  
-`meta-llama/Llama-3.2-1B`, `Qwen/Qwen2.5-1.5B`, `apple/OpenELM-1_1B`, `mistralai/Mistral-7B-v0.3`, `allenai/OLMoE-1B-7B-0924`, `Dream-org/Dream-v0-Base-7B`.
+`meta-llama/Llama-3.2-1B`, `Qwen/Qwen2.5-1.5B`, `apple/OpenELM-1_1B`, `mistralai/Mistral-7B-v0.3`, `allenai/OLMoE-1B-7B-0924`, `google/gemma-3-270m`, `Dream-org/Dream-v0-Base-7B`.
 
 ***
 

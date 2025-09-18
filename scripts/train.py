@@ -458,6 +458,10 @@ def get_model_trainer(cfg: dict, token: str = None):
 
     print(f"🔥 Model : \n {model}")
 
+    model = torch.compile(model)
+
+    print(f"🔥 Model Compiled for training !")  # not tested !!!
+
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
     training_args = TrainingArguments(

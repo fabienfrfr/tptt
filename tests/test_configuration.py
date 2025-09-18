@@ -11,12 +11,11 @@ import src.tptt.configuration_tptt as tpttconf
 from src.tptt.configuration_tptt import (
     TpttConfig,
     convert_sets_to_lists,
-    get_mode_name,
-    parse_mode_name,
+    get_model_name,
 )
 
 
-def test_tptt_config_base_model_is_none(monkeypatch):  # pylint: disable=unused-argument
+def test_liza_config_base_model_is_none(monkeypatch):  # pylint: disable=unused-argument
     """Test that config loads from AutoConfig.from_pretrained if base_model_config is None."""
     # Patch from_pretrained
     with patch("src.tptt.configuration_tptt.AutoConfig.from_pretrained") as mock_auto:
@@ -27,7 +26,7 @@ def test_tptt_config_base_model_is_none(monkeypatch):  # pylint: disable=unused-
         assert conf.base_model_name == "test/model_a"
 
 
-def test_tptt_config_linear_precision_dtype():
+def test_liza_config_linear_precision_dtype():
     """Test config casts torch dtype linear_precision to string."""
 
     class DummyConfig(PretrainedConfig):
@@ -47,7 +46,7 @@ class DummyEnum:  # pylint: disable=too-few-public-methods
     value = "dummy_enum_val"
 
 
-def test_tptt_config_lora_peft_type_enum():
+def test_liza_config_lora_peft_type_enum():
     """Test lora_config with peft_type as enum-like object."""
 
     class DummyConfig(PretrainedConfig):
@@ -61,12 +60,6 @@ def test_tptt_config_lora_peft_type_enum():
     conf = TpttConfig(base_model_config=DummyConfig(), lora_config=lora_conf)
     assert conf.lora_config["peft_type"] == "dummy_enum_val"
     assert isinstance(conf.lora_config["foo"], list)
-
-
-def test_parse_mode_name_invalid_mode():
-    """Test that parse_mode_name raises for unknown mode."""
-    with pytest.raises(ValueError):
-        parse_mode_name("unknown_super_mode")
 
 
 def test_generate_model_card_with_path(tmp_path):
@@ -169,7 +162,7 @@ def test_convert_sets_to_lists_no_change():
 
 
 # capfd capturing standard output (standart fixture for pytest)
-def test_tptt_config_bidirectional_true(capfd):
+def test_liza_config_bidirectional_true(capfd):
     """Test bidirectional config test"""
 
     class DummyConfig(PretrainedConfig):
@@ -185,7 +178,7 @@ def test_tptt_config_bidirectional_true(capfd):
     assert config.bidirectional is True
 
 
-def test_tptt_config_padding_side_default(caplog):
+def test_liza_config_padding_side_default(caplog):
     """Test padding config"""
 
     class DummyConfig(PretrainedConfig):
@@ -201,85 +194,53 @@ def test_tptt_config_padding_side_default(caplog):
     assert config.padding_side == "right"
 
 
-def test_tptt_config_custom_operator_mode():
-    """test custom config"""
-
-    class DummyConfig(PretrainedConfig):
-        """Dummy config, change to conftest.py dummy"""
-
-        def __init__(self):
-
-            super().__init__()
-            self.hidden_size = 64
-
-    config = TpttConfig(
-        base_model_config=DummyConfig(), operator_mode="delta_product_kv_gelu_r"
-    )
-    assert config.recurrent_config["trick"] == "rotative"
-    assert config.recurrent_config["gate_type"] == "kv"
-
-
 @pytest.mark.parametrize(
     "params,expected_name",
     [
-        ((1, "k", True, "derivative"), "delta_rule"),
-        ((1, "v", True, "derivative"), "delta_rule_v"),
-        ((1, "kv", False, "derivative"), "delta_rule_kv_gelu"),
-        ((2, "k", True, "derivative"), "delta_product"),
-        ((2, "k", True, "rotative"), "delta_product_r"),
-        ((2, "k", True, "combined"), "delta_product_c"),
-        ((2, "kv", False, "derivative"), "delta_product_kv_gelu"),
-        ((2, "kv", False, "rotative"), "delta_product_kv_gelu_r"),
-        ((3, "kv", False, "rotative"), "delta_product_3_kv_gelu_r"),
-        ((3, "v", False, "combined"), "delta_product_3_v_gelu_c"),
-    ],
-)
-def test_get_mode_name(params, expected_name):
-    """Test param from from mode name"""
-    assert get_mode_name(*params) == expected_name
-
-
-@pytest.mark.parametrize(
-    "name,expected_params",
-    [
+        # lora, order, alpha_gate, beta_gate, linear, trick
         (
-            "delta_rule",
-            {"order": 1, "gate_type": "k", "linear": True, "trick": "derivative"},
+            (True, False, False, 1, "c", "k", True, "dt"),
+            "liza_lora_mag_causal_alpha-c_beta-k_order-1_linear_trick-dt",
         ),
         (
-            "delta_rule_v",
-            {"order": 1, "gate_type": "v", "linear": True, "trick": "derivative"},
+            (True, False, False, 1, "c", "v", True, "dt"),
+            "liza_lora_mag_causal_alpha-c_beta-v_order-1_linear_trick-dt",
         ),
         (
-            "delta_rule_kv_gelu",
-            {"order": 1, "gate_type": "kv", "linear": False, "trick": "derivative"},
+            (True, False, False, 1, "c", "kv", False, "dt"),
+            "liza_lora_mag_causal_alpha-c_beta-kv_order-1_gelu_trick-dt",
         ),
         (
-            "delta_product",
-            {"order": 2, "gate_type": "k", "linear": True, "trick": "derivative"},
+            (True, False, False, 2, "c", "k", True, "dt"),
+            "liza_lora_mag_causal_alpha-c_beta-k_order-2_linear_trick-dt",
         ),
         (
-            "delta_product_r",
-            {"order": 2, "gate_type": "k", "linear": True, "trick": "rotative"},
+            (True, False, False, 2, "c", "k", True, "rot"),
+            "liza_lora_mag_causal_alpha-c_beta-k_order-2_linear_trick-rot",
         ),
         (
-            "delta_product_c",
-            {"order": 2, "gate_type": "k", "linear": True, "trick": "combined"},
+            (True, False, False, 2, "c", "k", True, "rdt"),
+            "liza_lora_mag_causal_alpha-c_beta-k_order-2_linear_trick-rdt",
         ),
         (
-            "delta_product_kv_gelu",
-            {"order": 2, "gate_type": "kv", "linear": False, "trick": "derivative"},
+            (True, False, False, 2, "c", "kv", False, "dt"),
+            "liza_lora_mag_causal_alpha-c_beta-kv_order-2_gelu_trick-dt",
         ),
         (
-            "delta_product_kv_gelu_r",
-            {"order": 2, "gate_type": "kv", "linear": False, "trick": "rotative"},
+            (True, False, False, 2, "c", "kv", False, "rot"),
+            "liza_lora_mag_causal_alpha-c_beta-kv_order-2_gelu_trick-rot",
         ),
         (
-            "delta_product_3_v_gelu_c",
-            {"order": 3, "gate_type": "v", "linear": False, "trick": "combined"},
+            (True, False, False, 3, "c", "kv", False, "rot"),
+            "liza_lora_mag_causal_alpha-c_beta-kv_order-3_gelu_trick-rot",
+        ),
+        (
+            (True, False, False, 3, "c", "v", False, "rdt"),
+            "liza_lora_mag_causal_alpha-c_beta-v_order-3_gelu_trick-rdt",
         ),
     ],
 )
-def test_parse_mode_name(name, expected_params):
-    """Test get mode name from param"""
-    assert parse_mode_name(name) == expected_params
+def test_get_model_name(params, expected_name):
+    # Disable date since it changes every day
+    result = get_model_name(*params, prefix="liza", add_date=False)
+    assert result == expected_name

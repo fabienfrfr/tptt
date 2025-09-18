@@ -92,9 +92,9 @@
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
      showgrid="false"
-     inkscape:zoom="2.7436797"
-     inkscape:cx="380.14642"
-     inkscape:cy="101.50602"
+     inkscape:zoom="1.3718399"
+     inkscape:cx="207.02125"
+     inkscape:cy="277.36474"
      inkscape:window-width="1854"
      inkscape:window-height="1011"
      inkscape:window-x="0"
@@ -481,12 +481,12 @@
        transform="scale(1,-1)"
        style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:8px;font-family:CMR10;-inkscape-font-specification:CMR10;writing-mode:lr-tb;fill:#000000;fill-opacity:1;fill-rule:nonzero;stroke:none"
        id="text658"
-       x="316.02109"
+       x="305.52109"
        y="-566.90424"><tspan
-         x="316.02109"
+         x="305.52109"
          y="-566.90424"
          id="tspan656"
-         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:8px;font-family:serif;-inkscape-font-specification:serif">β</tspan></text>
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:8px;font-family:serif;-inkscape-font-specification:serif">(α,β)</tspan></text>
     <path
        d="m 296.5211,463.56921 0.001,11.88364 v 0 c 0,0 -0.61606,6.65952 7.499,6.86636 v 0 h 9.96277 42.53723 c 2.75119,0 3.75,0.99881 3.75,3.75 v 7.5"
        style="fill:none;stroke:#000000;stroke-width:1.19553;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:10;stroke-dasharray:none;stroke-opacity:1"
@@ -626,12 +626,12 @@
        transform="scale(1,-1)"
        style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:9.9626px;font-family:CMR10;-inkscape-font-specification:CMR10;writing-mode:lr-tb;fill:#000000;fill-opacity:1;fill-rule:nonzero;stroke:none"
        id="text238-7"
-       x="354.14716"
+       x="346.64716"
        y="-662.00476"><tspan
          sodipodi:role="line"
          id="tspan236-9"
-         x="354.14716"
-         y="-662.00476">MaG</tspan></text>
+         x="346.64716"
+         y="-662.00476">MaG (μ)</tspan></text>
     <path
        d="m 365.47615,672.13436 0,20.18485"
        style="fill:none;stroke:#000000;stroke-width:1.19553;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:10;stroke-dasharray:none;stroke-opacity:1;marker-end:url(#TriangleStart)"

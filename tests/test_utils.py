@@ -5,14 +5,21 @@ import pytest
 import torch
 from torch import nn
 
-from src.tptt.modeling_tptt import (apply_linear_attention_mask,
-                                    chunk_sequence, describe, ensure_stability,
-                                    expand_virtual_tokens, extract_layer_idx,
-                                    fast_invert_matrix, find_embedding_lm,
-                                    get_valid_chunk_size, match_dim,
-                                    soft_clamp, split_qkv,
-                                    truncate_attention_mask,
-                                    unlinear_activation)
+from src.tptt.modeling_tptt import (
+    apply_linear_attention_mask,
+    describe,
+    ensure_stability,
+    VirtualTokenExpander,
+    extract_layer_idx,
+    construct_causal_forward_solver,
+    find_embedding_lm,
+    get_valid_chunk_size,
+    match_dim,
+    soft_clamp,
+    split_qkv,
+    truncate_attention_mask,
+    unlinear_activation,
+)
 
 # -------- soft_clamp --------
 
@@ -56,68 +63,89 @@ def test_unlinear_activation_basic_and_scale():
         assert torch.isfinite(z).all()
 
 
-# -------- chunk_sequence --------
-
-
-def test_chunk_sequence_simple():
-    """Correctly slices for chunked sequence."""
-    x = torch.arange(1 * 1 * 6 * 2).reshape(1, 1, 6, 2)
-    out = chunk_sequence(x, num_chunks=3, chunk_size=2)
-    assert out.shape == (1, 1, 3, 2, 2)
-    assert torch.equal(out[0, 0, 0], x[0, 0, 0:2])
-    assert torch.equal(out[0, 0, 1], x[0, 0, 2:4])
-    assert torch.equal(out[0, 0, 2], x[0, 0, 4:6])
-
-
-def test_chunk_sequence_bad_shape():
-    """Shape not divisible by chunk_size will raise."""
-    x = torch.randn(2, 2, 5, 4)
-    with pytest.raises(RuntimeError):
-        chunk_sequence(x, num_chunks=3, chunk_size=2)
-
-
-def test_chunk_sequence_dtype():
-    """Output preserves dtype."""
-    x = torch.arange(1 * 1 * 4 * 2, dtype=torch.float16).reshape(1, 1, 4, 2)
-    out = chunk_sequence(x, num_chunks=2, chunk_size=2)
-    assert out.dtype == x.dtype
-
-
 # -------- expand_virtual_tokens --------
 
 
-@pytest.mark.parametrize("mode", ["derivative", "rotative", "combined"])
-def test_expand_virtual_tokens_shape(mode):
+@pytest.mark.parametrize("mode", ["dt", "rot", "rdt", "cte"])
+def test_virtual_token_expander_shape(mode):
     """Output shape = seq_len * n."""
-    x = torch.randn(1, 5, 10, 8)
-    out = expand_virtual_tokens(x, 3, mode)
-    assert out.shape == (1, 5, 30, 8)
+    b, h, s, d = 1, 5, 10, 8
+    n = 3
+    x = torch.randn(b, h, s, d)
+    expander = VirtualTokenExpander(num_heads=h, head_dim=d, n=n, mode=mode)
+    out = expander(x)
+    assert out.shape == (b, h, s, n, d)
 
 
-def test_expand_virtual_tokens_grad_and_identity():
-    """Test gradient and n=1 identity."""
-    x = torch.randn(2, 3, 4, 6, requires_grad=True)
-    out = expand_virtual_tokens(x, 1)
-    assert torch.allclose(x, out)
-    y = expand_virtual_tokens(x, 2)
-    loss = y.sum()
+@pytest.mark.parametrize("mode", ["dt", "rot"])
+def test_virtual_token_expander_values(mode):
+    b, h, s, d = 1, 1, 10, 2
+    n = 2
+    x = (
+        torch.arange(1, s + 1, dtype=torch.float32)
+        .reshape(1, 1, s, 1)
+        .repeat(1, 1, 1, d)
+    )
+    x[:, :, 0, :] = 100
+
+    expander = VirtualTokenExpander(num_heads=h, head_dim=d, n=n, mode=mode)
+    out = expander(x)
+
+    expected_output = torch.zeros(b, h, s * n, d)
+
+    if mode == "dt":
+        kernel = torch.tensor([-0.5, 0.5])
+        expected_output[:, :, 0::n, :] = x * kernel[0]
+        expected_output[:, :, n + 1 :: n, :] = x[:, :, :-1, :] * kernel[1]
+    elif mode == "rot":
+        expected_output[:, :, 0::n, :] = x
+        expected_output[:, :, 1::n, :] = -x
+
+    expected_output = expected_output.reshape(b, h, s, n, d)
+    torch.testing.assert_close(out, expected_output, rtol=1e-5, atol=1e-6)
+
+
+@pytest.mark.parametrize("n", [1])
+def test_virtual_token_expander_identity(n):
+    """Test output identity for n=1."""
+    b, h, s, d = 2, 3, 4, 6
+    x = torch.randn(b, h, s, d, requires_grad=True)
+    expander = VirtualTokenExpander(num_heads=h, head_dim=d, n=n, mode="cte")
+    out = expander(x)
+    expected_output = x.unsqueeze(3)
+    assert torch.allclose(expected_output, out), "Output should match input for n=1"
+
+
+@pytest.mark.parametrize("n", [1, 2])
+def test_virtual_token_expander_gradients(n):
+    """Test gradients are properly computed for n>1."""
+    b, h, s, d = 2, 3, 4, 6
+    x = torch.randn(b, h, s, d, requires_grad=True)
+    expander = VirtualTokenExpander(num_heads=h, head_dim=d, n=n, mode="cte")
+    out = expander(x)
+    loss = out.sum()
     loss.backward()
-    assert x.grad is not None
+    assert x.grad is not None, f"Gradient should be computed for n={n}"
 
 
-def test_expand_virtual_tokens_invalid_shape_and_mode():
+def test_virtual_token_expander_invalid_shape_and_mode():
     """Invalid shape or mode raises."""
+    # Shape must be (batch, num_heads, seq_len, head_dim)
     with pytest.raises(Exception):
-        expand_virtual_tokens(torch.randn(2, 3, 4), 2)
+        expander = VirtualTokenExpander(num_heads=2, head_dim=4, n=2)
+        expander(torch.randn(2, 3, 4))  # manque head_dim
     with pytest.raises(ValueError):
-        expand_virtual_tokens(torch.randn(1, 2, 4, 5), 2, mode="badmode")
+        expander = VirtualTokenExpander(num_heads=1, head_dim=5, n=2, mode="badmode")
+        expander(torch.randn(1, 1, 2, 5))
 
 
-def test_expand_virtual_tokens_head_dim_odd_rotative():
+def test_virtual_token_expander_head_dim_odd_rotative():
     """rotative mode works for odd head_dim."""
-    x = torch.randn(1, 2, 4, 7)
-    out = expand_virtual_tokens(x, n=2, mode="rotative")
-    assert out.shape[-1] == 7
+    b, h, s, d = 1, 2, 4, 7
+    x = torch.randn(b, h, s, d)
+    expander = VirtualTokenExpander(num_heads=h, head_dim=d, n=2, mode="rot")
+    out = expander(x)
+    assert out.shape[-1] == d
 
 
 # -------- fast_invert_matrix --------
@@ -134,7 +162,7 @@ def test_fast_invert_matrix_correctness(num_batch, hidden_dim, num_chunk, size):
     )
     tri_eye = torch.eye(size).to(householder.device).to(householder.dtype)
     indicator = tri_eye.view((1, 1, 1, size, size))
-    inv = fast_invert_matrix(householder)
+    inv = construct_causal_forward_solver(householder)
     matrix = indicator - householder
     result = torch.matmul(inv, matrix)
     assert torch.allclose(result, indicator.expand_as(result), atol=1e-5)
@@ -147,7 +175,7 @@ def test_fast_invert_matrix_identity_on_zero_input(dtype):
     """Zero input should yield identity matrices (one per batch), for different dtypes."""
     tri = torch.zeros(2, 3, 4, 4, dtype=dtype)
     eye = torch.eye(4, dtype=dtype).view(1, 1, 4, 4).expand_as(tri)
-    out = fast_invert_matrix(tri, dtype=dtype)
+    out = construct_causal_forward_solver(tri, dtype=dtype)
 
     assert out.dtype == dtype
     assert torch.allclose(out, eye), "Expected identity matrices for zero input"
@@ -159,7 +187,7 @@ def test_fast_invert_matrix_identity_on_zero_input(dtype):
 def test_fast_invert_matrix_finite_output(dtype):
     """Output should be finite for large input values (no inf/nan)."""
     tri = torch.full((2, 2, 3, 3), 1e4, dtype=dtype)
-    out = fast_invert_matrix(tri, dtype=dtype)
+    out = construct_causal_forward_solver(tri, dtype=dtype)
 
     assert out.dtype == dtype
     assert torch.isfinite(out).all(), "Expected finite values in inversion output"
@@ -381,3 +409,9 @@ def test_find_embedding_lm_variants():
     assert find_embedding_lm(Nothing()) is None
     seq = nn.Sequential(EmbModule())
     assert isinstance(find_embedding_lm(seq), nn.Embedding)
+
+
+if __name__ == "__main__":
+    # Print testing (Use debugger)
+    # test_expand_virtual_tokens_derivative_with_ones("derivative")
+    pass

@@ -13,7 +13,7 @@ from pathlib import Path
 import re
 import shutil
 from functools import partial
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, Literal
 
 import torch
 import torch.nn.functional as F
@@ -94,6 +94,121 @@ class CausalAvgPool1d(nn.Module):
         return self.pool(y.transpose(1, 2))  # [B, S, F → output_size]
 
 
+class VirtualTokenExpander(nn.Module):
+    """
+    Expands input tokens into 'n' virtual tokens using derivative and rotative methods.
+    """
+
+    def __init__(
+        self,
+        num_heads: int,
+        head_dim: int,
+        n: int,
+        mode: Literal["dt", "rot", "rdt"] = "rdt",
+        flip: bool = True,
+    ):
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = head_dim
+        self.n = n
+        self.mode = mode
+        self.flip = flip
+
+        # Binomial kernel for derivative trick
+        deriv_coeffs = [(-1) ** k * math.comb(n - 1, k) for k in range(n)]
+        deriv_coeffs_tensor = torch.tensor(deriv_coeffs, dtype=torch.float32)
+        deriv_coeffs_tensor /= deriv_coeffs_tensor.abs().sum()
+        # Register as buffer since it is constant, not learned
+        self.register_buffer("deriv_coeffs", deriv_coeffs_tensor)
+
+        # Rotative parameters for rotative trick
+        angles = torch.arange(n, dtype=torch.float32) * (2 * math.pi / n)
+        self.register_buffer("rot_cos", torch.cos(angles).view(1, 1, 1, n, 1))
+        self.register_buffer("rot_sin", torch.sin(angles).view(1, 1, 1, n, 1))
+
+    def _apply_derivative_conv(self, x: torch.Tensor) -> torch.Tensor:
+        """Applies the derivative method via conv kernel."""
+        batch_size, num_heads, _, head_dim = x.shape
+        device, dtype = x.device, x.dtype
+
+        # Padding on derivation sequence
+        x_padded = torch.cat(
+            [
+                torch.zeros(
+                    batch_size,
+                    num_heads,
+                    self.n - 1,
+                    head_dim,
+                    device=device,
+                    dtype=dtype,
+                ),
+                x,
+            ],
+            dim=2,
+        )
+
+        # Convolution part (slidding windows)
+        windows = x_padded.unfold(dimension=2, size=self.n, step=1)
+        kernel = self.deriv_coeffs
+        conv_out = windows * kernel.view(1, 1, 1, 1, self.n)
+
+        # Reshaping [B, H, S, n, d]
+        if self.flip:
+            conv_out = conv_out.flip(-1)
+        out = conv_out.permute(0, 1, 2, 4, 3)
+        return out
+
+    def _apply_rotative_expand(self, x: torch.Tensor) -> torch.Tensor:
+        """Applies the rotative method via simple expansion."""
+        batch_size, num_heads, seq_len, head_dim = x.shape
+        cos, sin = self.rot_cos, self.rot_sin
+        d_parity = head_dim // 2
+
+        if head_dim % 2:
+            x_pairs = x[..., :-1].view(batch_size, num_heads, seq_len, d_parity, 2)
+        else:
+            x_pairs = x.view(batch_size, num_heads, seq_len, d_parity, 2)
+
+        x_pairs = x_pairs.unsqueeze(3).expand(
+            batch_size, num_heads, seq_len, self.n, d_parity, 2
+        )
+        x0, x1 = x_pairs[..., 0], x_pairs[..., 1]
+
+        x0r = x0 * cos - x1 * sin
+        x1r = x0 * sin + x1 * cos
+
+        rot = torch.stack([x0r, x1r], dim=-1).reshape(
+            batch_size, num_heads, seq_len, self.n, d_parity * 2
+        )
+        if head_dim % 2:
+            last = (
+                x[..., -1]
+                .unsqueeze(-1)
+                .unsqueeze(3)
+                .expand(batch_size, num_heads, seq_len, self.n, 1)
+            )
+            rot = torch.cat([rot, last], dim=-1)
+        return rot.reshape(batch_size, num_heads, seq_len, self.n, head_dim)
+
+    def forward(self, x: torch.Tensor, force: Optional[str] = None) -> torch.Tensor:
+        """Forward pass to expand input tokens. [B, H, S, D] -> [B, H, S, n, D]"""
+        mode = self.mode
+        if force is not None:
+            mode = force
+        if mode == "dt":
+            return self._apply_derivative_conv(x)
+        elif mode == "rot":
+            return self._apply_rotative_expand(x)
+        elif mode == "rdt":
+            d_out = self._apply_derivative_conv(x)
+            r_out = self._apply_rotative_expand(x)
+            return 0.5 * (d_out + r_out)
+        elif mode == "cte":
+            return x.unsqueeze(3).repeat(1, 1, 1, self.n, 1)
+        else:
+            raise ValueError(f"Unknown mode {self.mode}")
+
+
 class LinearAttention(nn.Module):
     """
     Linear multi-head attention layer: [B, S, D] -> [B, S, D]
@@ -113,7 +228,7 @@ class LinearAttention(nn.Module):
         padding_side: str = "right",
         shared_attn: bool = False,  # shared attention
         layer_idx: int = 0,
-        operator_mode: str = "delta_rule",
+        operator_mode: Optional[str] = "linear",
         use_linear_checkpoint: bool = False,
         recurrent_config: Optional[Dict[str, Any]] = None,
         linear_cache: Optional[LCache] = None,
@@ -135,6 +250,8 @@ class LinearAttention(nn.Module):
             num_heads // (num_key_value_heads or num_heads)
         )
         self.scaling = self.head_dim**-0.5
+        self.layer_idx = layer_idx
+        self.linear_cache = linear_cache or LCache()
         self.linear_precision = linear_precision
         self.padding_side = padding_side
 
@@ -150,15 +267,22 @@ class LinearAttention(nn.Module):
             )
             self.out_proj = nn.Linear(num_heads * self.head_dim, hidden_dim, bias=bias)
 
+        if recurrent_config is None:
+            operator_mode = "delta_product"  # force default operator mode if no config
+            recurrent_config = {
+                "order": 2,
+                "alpha_gate": "c",
+                "beta_gate": "k",
+                "linear": True,
+                "trick": "dt",
+            }
+        self.operator_mode = operator_mode
+        self.recurrent_config = recurrent_config
         self.dropout = nn.Dropout(dropout) if dropout is not None else None
 
         self.linear_operator = LinearAttentionOp(
-            layer_idx=layer_idx,
-            operator_mode=operator_mode,
             use_linear_checkpoint=use_linear_checkpoint,
-            recurrent_config=recurrent_config,
             max_chunk_size=max_chunk_size,
-            linear_cache=linear_cache,
             linear_precision=linear_precision,
         )
         self.bidirectional = bidirectional
@@ -167,6 +291,158 @@ class LinearAttention(nn.Module):
         self.pool_g = CausalAvgPool1d(
             output_size=self.head_dim * self.num_key_value_heads, **pooling_config
         )
+        # Trick for n-houselholder product
+        self.virtual_token_expander = VirtualTokenExpander(
+            self.num_heads,
+            self.head_dim,
+            recurrent_config["order"],
+            recurrent_config["trick"],
+        )
+
+    def get_cache(self, use_cache: bool) -> Tuple[
+        Optional[torch.Tensor],
+        Optional[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]],
+    ]:
+        """
+        Retrieve recurrent state and qkvg buffers from the cache. (Only if causal)
+        """
+        if not use_cache:
+            return None, None
+        last_state = self.linear_cache[self.layer_idx]
+        if last_state is not None:
+            recurrent_state = last_state.get("recurrent_state", None)
+            qkvg_buffers = last_state.get("qkvg", None)
+        else:
+            recurrent_state = None
+            qkvg_buffers = None
+        return recurrent_state, qkvg_buffers
+
+    def save_cache(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        alpha: torch.Tensor,
+        beta: torch.Tensor,
+        state: torch.Tensor,
+        n_orders: int,
+    ) -> None:
+        """
+        Save the recurrent state and qkv buffers to the cache. (Only if causal)
+        """
+        if n_orders > 1:
+            qkvg_buffers = (
+                q[:, :, -(n_orders - 1) :, :],
+                k[:, :, -(n_orders - 1) :, :],
+                v[:, :, -(n_orders - 1) :, :],
+                alpha[:, :, -(n_orders - 1) :, :],
+                beta[:, :, -(n_orders - 1) :, :],
+            )
+        else:
+            qkvg_buffers = None
+        self.linear_cache.update(
+            self.layer_idx, recurrent_state=state, qkvg=qkvg_buffers
+        )
+
+    def compute_gate(self, k: torch.Tensor, v: torch.Tensor) -> Tuple[torch.Tensor]:
+        """
+        Compute the gating tensor according to the beta_gate.
+        """
+        # Forget and Write Gating for linear attn (abusive term)
+        f_g, w_g = self.pool_g(k), self.pool_g(v)
+        f_g = rearrange(f_g, "b n (h m) -> b h n m", h=self.num_key_value_heads)
+        w_g = rearrange(w_g, "b n (h m) -> b h n m", h=self.num_key_value_heads)
+        f_g = f_g.repeat_interleave(self.num_key_value_groups, dim=1)
+        w_g = w_g.repeat_interleave(self.num_key_value_groups, dim=1)
+        f_g, w_g = torch.sigmoid(f_g), torch.sigmoid(w_g)
+
+        # Convert to linear_precision for numerical stability and get model dtype
+        f_g, w_g = (x.to(self.linear_precision).contiguous() for x in (f_g, w_g))
+
+        # compute alpha and beta gate
+        gate_map = {
+            "k": f_g,
+            "v": w_g,
+            "kv": f_g * w_g,
+            "c": torch.ones_like(f_g),
+        }
+        alpha = gate_map[self.recurrent_config["alpha_gate"]]
+        beta = (
+            torch.full_like(f_g, 0.5)
+            if self.recurrent_config["beta_gate"] == "c"
+            else gate_map[self.recurrent_config["beta_gate"]]
+        )
+
+        return alpha, beta
+
+    def compute_extended_householder(self, q, k, v, alpha, beta, seq_len):
+        """Expand HouseHolder state (n_h > 1) with correct sequence length after expansion"""
+        n_orders = self.recurrent_config["order"]
+        if n_orders == 1:
+            return tuple(x.unsqueeze(3) for x in (q, k, v, alpha, beta))
+
+        # Expand q, k, v
+        tensors_qkv = [q, k, v]
+        expanded_qkv = [self.virtual_token_expander(t) for t in tensors_qkv]
+
+        # Expand alpha, beta with conditional force='cte'
+        expanded_ab = [
+            self.virtual_token_expander(
+                t,
+                force="cte" if self.recurrent_config[g] == "c" else None,
+            )
+            for t, g in zip([alpha, beta], ["alpha_gate", "beta_gate"])
+        ]
+
+        # Slice the last seq_len tokens on dim=2
+        expanded = [t[:, :, -seq_len:, :, :] for t in expanded_qkv + expanded_ab]
+
+        return tuple(expanded)
+
+    def prepare_attention_input(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Prepare input for linear attention. q,k,v, Input shape: [B, S, D], output [B, S, D].
+        """
+
+        # Reshape for multi-head
+        q = rearrange(q, "b n (h d) -> b h n d", h=self.num_heads)
+        k = rearrange(k, "b n (h d) -> b h n d", h=self.num_key_value_heads)
+        v = rearrange(v, "b n (h d) -> b h n d", h=self.num_key_value_heads)
+
+        # Repeat for GQA
+        k = k.repeat_interleave(self.num_key_value_groups, dim=1)
+        v = v.repeat_interleave(self.num_key_value_groups, dim=1)
+
+        ## DeltaNet-style: Silu activation and normalization
+        q = F.normalize(F.silu(q), p=2, dim=-1, eps=1e-6)
+        k = F.normalize(F.silu(k), p=2, dim=-1, eps=1e-6)
+
+        ## linear stability part
+        v = v * self.scaling
+
+        # Convert to linear_precision for numerical stability and get model dtype
+        q, k, v = (x.to(self.linear_precision).contiguous() for x in (q, k, v))
+        return q, k, v
+
+    def merge_head_output(self, out, out_proj, dtype, device):
+        """Merge heads, RMSNorm. Input shape: [B, H, S, d], output [B, S, D]."""
+        # Merge heads and project: [B, H, S, d] -> [B, S, H*d] -> Out proj
+        out = rearrange(out, "b h s d -> b s (h d)")
+        # Normalize output (RMS norm). Note: bidirectional compatibility
+        out = out / out.pow(2).mean(dim=-1, keepdim=True).add(1e-6).sqrt()
+        # Ensure dtype and device consistency
+        out = out.to(dtype=dtype, device=device)
+        # Apply output projection
+        out = out_proj(out)  # [B, S, D]
+        # Apply dropout if specified
+        if self.dropout is not None:
+            out = self.dropout(out)
+        return out
 
     def forward(
         self,
@@ -191,80 +467,93 @@ class LinearAttention(nn.Module):
             q, k, v = x[0], x[1], x[2]
             out_proj = self.out_proj if out_proj is None else out_proj
 
-        # get dtype and device
-        final_dtype, final_device = q.dtype, q.device
+        # get parameter
+        linear_activation = self.recurrent_config["linear"]
+        n_orders = self.recurrent_config["order"]
+        dtype, device, seq_len = q.dtype, q.device, q.shape[1]
+
         # Masking if needed
         if attn_mask is not None:
             v = apply_linear_attention_mask(attn_mask, v, self.padding_side)
 
-        # Forget and Write Gating for linear attn (abusive term)
-        f_g, w_g = self.pool_g(k), self.pool_g(v)
+        # Compute Gating
+        alpha, beta = self.compute_gate(k, v)
 
-        # Reshape for multi-head
-        q = rearrange(q, "b n (h d) -> b h n d", h=self.num_heads)
-        k = rearrange(k, "b n (h d) -> b h n d", h=self.num_key_value_heads)
-        v = rearrange(v, "b n (h d) -> b h n d", h=self.num_key_value_heads)
+        # Prepare linear q,k,v for attention operation
+        q, k, v = self.prepare_attention_input(q, k, v)
 
-        f_g = rearrange(f_g, "b n (h m) -> b h n m", h=self.num_key_value_heads)
-        w_g = rearrange(w_g, "b n (h m) -> b h n m", h=self.num_key_value_heads)
+        # Retrieve cache for generation
+        use_cache = kwargs.get("use_cache", False)
+        recurrent_state, qkvg = self.get_cache(use_cache)
 
-        # Repeat for GQA
-        k = k.repeat_interleave(self.num_key_value_groups, dim=1)
-        v = v.repeat_interleave(self.num_key_value_groups, dim=1)
+        if qkvg is not None and qkvg[0].shape[-1] == q.shape[-1]:
+            # inertial part (kv speed variation)
+            q = torch.cat([qkvg[0].to(q.device), q], dim=2)
+            k = torch.cat([qkvg[1].to(q.device), k], dim=2)
+            v = torch.cat([qkvg[2].to(q.device), v], dim=2)
+            alpha = torch.cat([qkvg[3].to(q.device), alpha], dim=2)
+            beta = torch.cat([qkvg[4].to(q.device), beta], dim=2)
 
-        f_g = f_g.repeat_interleave(self.num_key_value_groups, dim=1)
-        w_g = w_g.repeat_interleave(self.num_key_value_groups, dim=1)
+        if use_cache:
+            cache_tensors = {
+                name: tensor.detach().clone()
+                for name, tensor in zip(
+                    ["q", "k", "v", "alpha", "beta"], [q, k, v, alpha, beta]
+                )
+            }
 
-        ## DeltaNet-style: Silu activation and normalization
-        q = F.normalize(F.silu(q), p=2, dim=-1, eps=1e-6)
-        k = F.normalize(F.silu(k), p=2, dim=-1, eps=1e-6)
-
-        ## linear stability part
-        v = ensure_stability(v * self.scaling, min_val=-1e4, max_val=1e4)
-
-        # Apply sigmoid to forget and write gates
-        f_g = torch.clamp(torch.sigmoid(f_g), min=1e-6, max=1 - 1e-6)
-        w_g = torch.clamp(torch.sigmoid(w_g), min=1e-6, max=1 - 1e-6)
-
-        # Convert to linear_precision (float32) for numerical stability and get model dtype
-        q, k, v, f_g, w_g = (
-            x.to(self.linear_precision).contiguous() for x in (q, k, v, f_g, w_g)
+        # Extend input for n householder state [B,H,S,d] -> [B, H, S, n, d]
+        q, k, v, alpha, beta = self.compute_extended_householder(
+            q, k, v, alpha, beta, seq_len
         )
-        g = (f_g, w_g)
 
         # Linear Attention Core, output: [B, H, S, d]
         if self.bidirectional:  # Work only with uncausal attention
             # Forward direction
-            out_forward = self.linear_operator(q, k, v, g, **kwargs)
+            out_forward, state = self.linear_operator(
+                q=q,
+                k=k,
+                v=v,
+                alpha=alpha,
+                beta=beta,
+                linear_activation=linear_activation,
+                recurrent_state=recurrent_state,
+                **kwargs,
+            )
             # Backward direction: flip the input sequence on the time dimension (dim=2)
             kwargs_bwd = kwargs.copy()
             kwargs_bwd["use_cache"] = False
-            out_backward = self.linear_operator(
-                torch.flip(q, dims=[2]),
-                torch.flip(k, dims=[2]),
-                torch.flip(v, dims=[2]),
-                tuple(torch.flip(t, dims=[2]) for t in g),
+            out_backward, _ = self.linear_operator(
+                q=torch.flip(q, dims=[2]),
+                k=torch.flip(k, dims=[2]),
+                v=torch.flip(v, dims=[2]),
+                alpha=torch.flip(alpha, dims=[2]),
+                beta=torch.flip(beta, dims=[2]),
+                linear_activation=linear_activation,
                 **kwargs_bwd,
             )
             # Flip the output back to restore proper order
             out_backward = torch.flip(out_backward, dims=[2])
-            # Fusion: here, simple addition
-            out = out_forward + out_backward
+            # Fusion: here, simple mean
+            out = (out_forward + out_backward) / 2
         else:
-            out = self.linear_operator(q, k, v, g, **kwargs)
+            out, state = self.linear_operator(
+                q=q,
+                k=k,
+                v=v,
+                alpha=alpha,
+                beta=beta,
+                linear_activation=linear_activation,
+                recurrent_state=recurrent_state,
+                **kwargs,
+            )
 
-        # Merge heads and project: [B, H, S, d] -> [B, S, H*d] -> Out proj
-        out = rearrange(out, "b h s d -> b s (h d)")
-        # Normalize output (RMS norm). Note: bidirectional compatibility
-        out = out / out.pow(2).mean(dim=-1, keepdim=True).add(1e-6).sqrt()
-        # Ensure dtype and device consistency
-        out = out.to(dtype=final_dtype, device=final_device)
-        # Apply output projection
-        out = out_proj(out)  # [B, S, D]
-        out = ensure_stability(out, min_val=-1e4, max_val=1e4)
-        # Apply dropout if specified
-        if self.dropout is not None:
-            out = self.dropout(out)
+        # Save cache for generation (before n_householder expansion)
+        if use_cache:
+            self.save_cache(**cache_tensors, state=state, n_orders=n_orders)
+
+        # RMSNorm and Projection attention
+        out = self.merge_head_output(out, out_proj, dtype, device)
         return out
 
 
@@ -402,10 +691,6 @@ class LiZAttention(nn.Module):
             out_proj = getattr(base_attn, "dense", None)  # ou output.dense
         else:
             raise ValueError("Unsupported attention module: cannot find projections.")
-        # Ensure stability
-        q = ensure_stability(q, min_val=-1e4, max_val=1e4)
-        k = ensure_stability(k, min_val=-1e4, max_val=1e4)
-        v = ensure_stability(v, min_val=-1e4, max_val=1e4)
         return q, k, v, out_proj
 
     def _process_self_attn(
@@ -460,8 +745,6 @@ class LiZAttention(nn.Module):
         else:
             o_base = base_attn_outputs
             attn_weights, present_key_value, expected_attn_mode = None, None, 1
-        # Ensure stability
-        o_base = ensure_stability(o_base, min_val=-1e4, max_val=1e4)
         return o_base, attn_weights, present_key_value, expected_attn_mode
 
     def _prepare_attn_mixin(
@@ -513,7 +796,7 @@ class LiZAttention(nn.Module):
                 self.layer_idx,
             )
         # Final output
-        return ensure_stability(output_attention, min_val=-1e4, max_val=1e4)
+        return output_attention
 
     def forward(
         self,
@@ -893,153 +1176,62 @@ class LinearAttentionOp(nn.Module):
 
     def __init__(
         self,
-        layer_idx: int,
-        operator_mode: str = "delta_rule",
         use_linear_checkpoint: bool = False,
-        recurrent_config: Optional[dict] = None,
         max_chunk_size: int = 64,
-        linear_cache: Optional[LCache] = None,
         linear_precision: torch.dtype = torch.float32,
     ):
         super().__init__()
-        self.layer_idx = layer_idx
-        if recurrent_config is None:
-            operator_mode = "delta_rule"  # force default operator mode if no config
-            recurrent_config = {
-                "order": 1,
-                "gate_type": "k",
-                "linear": True,
-                "trick": "derivative",
-            }
-        self.operator_mode = operator_mode
         self.use_linear_checkpoint = use_linear_checkpoint
-
-        self.order = recurrent_config["order"]
-        self.gate_type = recurrent_config["gate_type"]
-        self.linear = recurrent_config["linear"]
-        self.trick = recurrent_config["trick"]
-
         self.max_chunk_size = max_chunk_size
-        self.linear_cache = linear_cache or LCache()
         self.linear_precision = linear_precision
-
-    def compute_gate(self, beta: Tuple[torch.Tensor]) -> torch.Tensor:
-        """
-        Compute the gating tensor according to the gate_type.
-        """
-        if self.gate_type == "k":
-            return torch.clamp(beta[0], min=1e-6, max=1 - 1e-6)
-        if self.gate_type == "v":
-            return torch.clamp(beta[1], min=1e-6, max=1 - 1e-6)
-        if self.gate_type == "kv":
-            return torch.clamp(beta[0] * beta[1], min=1e-6, max=1 - 1e-6)
-        raise ValueError(f"Unsupported gate_type: {self.gate_type}")
-
-    def get_cache(self, use_cache: bool) -> Tuple[
-        Optional[torch.Tensor],
-        Optional[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]],
-    ]:
-        """
-        Retrieve recurrent state and qkv buffers from the cache.
-        """
-        if not use_cache:
-            return None, None
-        last_state = self.linear_cache[self.layer_idx]
-        if last_state is not None:
-            recurrent_state = last_state.get("recurrent_state", None)
-            qkv_buffers = last_state.get("qkv", None)
-        else:
-            recurrent_state = None
-            qkv_buffers = None
-        return recurrent_state, qkv_buffers
-
-    def save_cache(
-        self,
-        use_cache: bool,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        gate: torch.Tensor,
-        state: torch.Tensor,
-    ) -> None:
-        """
-        Save the recurrent state and qkv buffers to the cache.
-        """
-        if not use_cache:
-            return
-        if self.order > 1:
-            qkv_buffers = (
-                q[:, :, -(self.order - 1) :, :],
-                k[:, :, -(self.order - 1) :, :],
-                v[:, :, -(self.order - 1) :, :],
-                gate[:, :, -(self.order - 1) :, :],
-            )
-        else:
-            qkv_buffers = None
-        self.linear_cache.update(self.layer_idx, recurrent_state=state, qkv=qkv_buffers)
 
     def forward(
         self,
         q: torch.Tensor,
         k: torch.Tensor,
         v: torch.Tensor,
-        beta: Union[Tuple[torch.Tensor], torch.Tensor],
+        alpha: torch.Tensor,
+        beta: torch.Tensor,
+        linear_activation: bool,
+        recurrent_state: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> torch.Tensor:
-        """
+        """gate
         Forward pass for the attention operator.
         """
         # Ensure linear_precision for numerical stability (float32)
-        q, k, v = [x.to(self.linear_precision) for x in (q, k, v)]
-        if isinstance(beta, (tuple, list)):
-            beta = tuple(b.to(self.linear_precision) for b in beta)
-        else:
-            beta = beta.to(self.linear_precision)
-
-        gate = self.compute_gate(beta)
+        q, k, v, alpha, beta = [
+            x.to(self.linear_precision) for x in (q, k, v, alpha, beta)
+        ]
 
         # Retrieve cache if needed
         use_cache = kwargs.get("use_cache", False)
         use_checkpoint = not (use_cache) and self.use_linear_checkpoint
-        recurrent_state, qkvb = self.get_cache(use_cache)
-
-        if qkvb is not None and qkvb[0].shape == q.shape:
-            q = torch.cat([qkvb[0].to(q.device), q], dim=2).to(self.linear_precision)
-            k = torch.cat([qkvb[1].to(q.device), k], dim=2).to(self.linear_precision)
-            v = torch.cat([qkvb[2].to(q.device), v], dim=2).to(self.linear_precision)
-            gate = torch.cat([qkvb[3].to(q.device), gate], dim=2).to(
-                self.linear_precision
-            )
 
         output, state = self.chunk_delta_product_forward(
             q,
             k,
             v,
-            gate,
+            alpha,
+            beta,
             self.max_chunk_size,
-            n=self.order,
-            trick=self.trick,
-            linear=self.linear,
+            linear_activation=linear_activation,
             initial_state=recurrent_state,
             use_checkpoint=use_checkpoint,
             linear_precision=self.linear_precision,
         )
 
-        # Save cache if needed
-        self.save_cache(use_cache, q, k, v, gate, state)
-
-        return output
+        return output, state
 
     @staticmethod
     def chunk_delta_product_forward(
         query: torch.Tensor,
         key: torch.Tensor,
         value: torch.Tensor,
-        beta_gate: torch.Tensor,
+        alpha: torch.Tensor,
+        beta: torch.Tensor,
         chunk_size: int,
-        n: int = 1,
-        trick: str = "derivative",
-        linear: bool = True,
+        linear_activation: bool = True,
         initial_state: Optional[torch.Tensor] = None,
         use_checkpoint: bool = True,
         linear_precision: torch.dtype = torch.float32,
@@ -1051,33 +1243,35 @@ class LinearAttentionOp(nn.Module):
 
         # --- Main chunk_delta_product_forward logic ---
 
-        batch_size, num_heads, seq_len, head_dim = query.shape
+        batch_size, num_heads, seq_len, n_orders, head_dim = query.shape
         chunk_size = get_valid_chunk_size(seq_len, chunk_size)
         num_chunks = seq_len // chunk_size
 
-        query_n = query if n == 1 else expand_virtual_tokens(query, n, trick)
-        key_n = key if n == 1 else expand_virtual_tokens(key, n, trick)
-        value_n = value if n == 1 else expand_virtual_tokens(value, n, trick)
-        beta_n = beta_gate if n == 1 else expand_virtual_tokens(beta_gate, n, trick)
+        # Reshape to combine seq_len and n_orders into virtual tokens
+        query, key, value, alpha, beta = [
+            x.reshape(batch_size, num_heads, seq_len * n_orders, -1)
+            for x in (query, key, value, alpha, beta)
+        ]
 
-        q_chunks = chunk_sequence(query_n, num_chunks, chunk_size * n)
-        k_chunks = chunk_sequence(key_n, num_chunks, chunk_size * n)
-        v_chunks = chunk_sequence(value_n, num_chunks, chunk_size * n)
-        beta_chunks = chunk_sequence(beta_n, num_chunks, chunk_size * n)
+        # Chunk the sequences with virtual tokens
+        q_chunks, k_chunks, v_chunks, alpha_chunks, beta_chunks = [
+            x.reshape(batch_size, num_heads, num_chunks, chunk_size * n_orders, -1)
+            for x in (query, key, value, alpha, beta)
+        ]
 
         k_beta = k_chunks * beta_chunks
         v_beta = v_chunks * beta_chunks
 
+        # [B,H,num_chunks,N,D] @ [B,H,num_chunks,D,N] -> [B,H,num_chunks,N,N]
         householder = -(k_beta @ k_chunks.transpose(-2, -1)).tril(-1)
-        householder = ensure_stability(householder, min_val=-1e4, max_val=1e4)
 
-        # size : N = chunk_size * n
-        inv_hh = fast_invert_matrix(householder, dtype=linear_precision)  # [(...),N,N]
+        # size : N = chunk_size * n_orders -->  [(...),N,N]
+        inv_hh = construct_causal_forward_solver(householder, dtype=linear_precision)
 
-        w = ensure_stability(torch.matmul(inv_hh, k_beta), min_val=-1e4, max_val=1e4)
-        u = ensure_stability(torch.matmul(inv_hh, v_beta), min_val=-1e4, max_val=1e4)
+        w = torch.matmul(inv_hh, k_beta)
+        u = torch.matmul(inv_hh, v_beta)
 
-        state_shape = (batch_size, num_heads, n, head_dim, head_dim)
+        state_shape = (batch_size, num_heads, n_orders, head_dim, head_dim)
         if initial_state is not None and initial_state.shape == state_shape:
             state = initial_state.to(device=query.device, dtype=linear_precision)
         else:
@@ -1088,22 +1282,27 @@ class LinearAttentionOp(nn.Module):
                 dtype=linear_precision,
             )
 
+        # Reshape to separate n virtual tokens
+        q_chunks, w, u, alpha_chunks = [
+            x.reshape(batch_size, num_heads, num_chunks, chunk_size, n_orders, -1)
+            for x in (q_chunks, w, u, alpha_chunks)
+        ]
+
+        # Process all chunks sequentially with per-token state
         output, final_state = sequential_delta_product_scan(
             q_chunks.to(dtype=linear_precision),
             w.to(dtype=linear_precision),
             u.to(dtype=linear_precision),
-            n,
-            linear,
-            chunk_size,
+            alpha_chunks.to(dtype=linear_precision),
+            linear_activation,
             state.to(dtype=linear_precision),
             linear_precision=linear_precision,
             use_checkpoint=use_checkpoint,
         )
 
-        idx_last_order = torch.arange(chunk_size, device=output.device) * n + (n - 1)
-        output = output[:, :, :, idx_last_order, :]  # [B, H, num_chunks, chunk_size, D]
+        # Reshape back to [B, H, seq_len, D]
+        output = output[:, :, :, :, -1, :]  # [B, H, num_chunks, chunk_size, D]
         output = output.reshape(batch_size, num_heads, seq_len, head_dim)
-
         return output.to(dtype=linear_precision), final_state.to(dtype=linear_precision)
 
 
@@ -1111,9 +1310,8 @@ def sequential_delta_product_scan(
     q_chunks: torch.Tensor,
     w: torch.Tensor,
     u: torch.Tensor,
-    n_orders: int,
+    alpha_chunks: torch.Tensor,
     linear_activation: bool,
-    current_chunk_size: int,
     initial_recurrent_state: torch.Tensor,
     linear_precision: torch.dtype,
     use_checkpoint: bool,
@@ -1122,7 +1320,7 @@ def sequential_delta_product_scan(
     DeltaProduct implementation https://arxiv.org/abs/2502.10297
     Implements the per-token Householder state updates.
     """
-    batch, head, num_chunks_inner, chunk_n_total, dim = q_chunks.shape
+    batch, head, num_chunks_inner, chunk_size, n_orders, dim = q_chunks.shape
     output_inner = torch.empty_like(q_chunks)
     # initial_recurrent_state is H_{last_token_of_prev_chunk, n-1} ([B, H, D, D])
     h_0_base = initial_recurrent_state[:, :, -1, :, :].clone()
@@ -1131,6 +1329,7 @@ def sequential_delta_product_scan(
         q_chunk_params: torch.Tensor,
         w_chunk_params: torch.Tensor,
         u_chunk_params: torch.Tensor,
+        a_chunk_params: torch.Tensor,
         h_0_base: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
@@ -1139,28 +1338,27 @@ def sequential_delta_product_scan(
         o_intra_current_chunk = torch.zeros(
             batch,
             head,
-            chunk_n_total,
+            chunk_size,
+            n_orders,
             dim,
             device=q_chunk_params.device,
             dtype=linear_precision,
         )
         o_inter_current_chunk = torch.zeros_like(o_intra_current_chunk)
         current_accumulated_state_per_token = (
-            h_0_base.unsqueeze(2).expand(-1, -1, current_chunk_size, -1, -1).clone()
-        )  # [B, H, current_chunk_size, D, D]
+            h_0_base.unsqueeze(2).expand(-1, -1, chunk_size, -1, -1).clone()
+        )  # [B, H, chunk_size, D, D]
 
         for step in range(n_orders):
-            idx_virtual_tokens = (
-                torch.arange(current_chunk_size, device=q_chunk_params.device)
-                * n_orders
-                + step
-            )
-            q_s = q_chunk_params[:, :, idx_virtual_tokens, :]
-            w_s = w_chunk_params[:, :, idx_virtual_tokens, :]
-            u_s = u_chunk_params[:, :, idx_virtual_tokens, :]
+            q_s = q_chunk_params[:, :, :, step, :]
+            w_s = w_chunk_params[:, :, :, step, :]
+            u_s = u_chunk_params[:, :, :, step, :]
+            a_s = a_chunk_params[:, :, :, step, :]
 
+            # DeltaProduct recurrence per order (H_ij -> H_i(j+1))
             state_input_for_this_step = current_accumulated_state_per_token
 
+            # Parallel DeltaProduct update in order j
             ## BLAS/cuBLAS einsum "bhcd,bhcdd->bhcd"
             k_trans_h_old = (
                 torch.matmul(
@@ -1173,19 +1371,21 @@ def sequential_delta_product_scan(
 
             u_val = u_s - k_trans_h_old
 
-            o_inter_current_chunk[:, :, idx_virtual_tokens, :] = (
+            o_inter_current_chunk[:, :, :, step, :] = (
                 torch.matmul(q_s.unsqueeze(-2), state_input_for_this_step)
                 .squeeze(-2)
                 .to(dtype=linear_precision)
             )
 
             ## BLAS/cuBLAS einsum "bhcd,bhcd->bhcd"
-            o_intra_current_chunk[:, :, idx_virtual_tokens, :] = (q_s * u_val).to(
+            o_intra_current_chunk[:, :, :, step, :] = (q_s * u_val).to(
                 dtype=linear_precision
             )
 
+            # DeltaProduct state update [BHCDD]
+            gated_state = state_input_for_this_step * a_s.unsqueeze(-2)
             outer_product_term = torch.matmul(w_s.unsqueeze(-1), u_val.unsqueeze(-2))
-            new_state_i_per_token = state_input_for_this_step + outer_product_term
+            new_state_i_per_token = gated_state + outer_product_term
             current_accumulated_state_per_token = new_state_i_per_token.to(
                 dtype=linear_precision
             )
@@ -1200,6 +1400,7 @@ def sequential_delta_product_scan(
         q_chunk_params = q_chunks[:, :, chunk_idx_inner]
         w_chunk_params = w[:, :, chunk_idx_inner]
         u_chunk_params = u[:, :, chunk_idx_inner]
+        a_chunk_params = alpha_chunks[:, :, chunk_idx_inner]
 
         # Checkpointed call if training
         call = (
@@ -1212,6 +1413,7 @@ def sequential_delta_product_scan(
             q_chunk_params,
             w_chunk_params,
             u_chunk_params,
+            a_chunk_params,
             h_0_base,
         )
         if not linear_activation:  # unlinear activation between chunks
@@ -1226,81 +1428,6 @@ def unlinear_activation(x: torch.Tensor, scale: float = 2.0) -> torch.Tensor:
     x_n = x.norm(p=2, dim=-1, keepdim=True) + 1e-6
     x_gelu = F.gelu(scale * x / x_n, approximate="tanh")  # pylint: disable=not-callable
     return (x / scale) * x_gelu
-
-
-def chunk_sequence(x: torch.Tensor, num_chunks: int, chunk_size: int) -> torch.Tensor:
-    """Splits [B, H, S, D] to  [B, H, num_chunks, chunk_size, D]"""
-    batch_size, num_heads, _, head_dim = x.shape
-    return x.reshape(batch_size, num_heads, num_chunks, chunk_size, head_dim)
-
-
-def expand_virtual_tokens(
-    x: torch.Tensor, n: int, mode: str = "derivative"
-) -> torch.Tensor:
-    """Expand tokens into 'n' virtual tokens using the selected trick."""
-    batch_size, num_heads, seq_len, head_dim = x.shape
-    device, dtype = x.device, x.dtype
-
-    def derivative_expand(x: torch.Tensor) -> torch.Tensor:
-        """Expand tokens using the derivative trick."""
-        x_pad = torch.cat(
-            [
-                torch.zeros(
-                    batch_size, num_heads, n - 1, head_dim, device=device, dtype=dtype
-                ),
-                x,
-            ],
-            dim=2,
-        )
-        coeffs = torch.tensor(
-            [(-1) ** k * math.comb(n - 1, k) for k in range(n)],
-            device=device,
-            dtype=dtype,
-        )
-        coeffs /= coeffs.norm(p=1)
-        return (
-            (x_pad.unfold(2, n, 1) * coeffs.view(1, 1, 1, 1, n))
-            .flip(-1)
-            .permute(0, 1, 2, 4, 3)
-            .reshape(batch_size, num_heads, seq_len * n, head_dim)
-        )
-
-    def rotative_expand(x: torch.Tensor) -> torch.Tensor:
-        """Expand tokens using the rotative trick."""
-        d_parity = head_dim // 2
-        angles = torch.arange(n, device=device, dtype=dtype) * (2 * math.pi / n)
-        cos = torch.cos(angles).view(1, 1, 1, n, 1)
-        sin = torch.sin(angles).view(1, 1, 1, n, 1)
-        if head_dim % 2:
-            x_pairs = x[..., :-1].view(batch_size, num_heads, seq_len, d_parity, 2)
-        else:
-            x_pairs = x.view(batch_size, num_heads, seq_len, d_parity, 2)
-        x_pairs = x_pairs.unsqueeze(3).expand(
-            batch_size, num_heads, seq_len, n, d_parity, 2
-        )
-        x0, x1 = x_pairs[..., 0], x_pairs[..., 1]
-        x0r = x0 * cos - x1 * sin
-        x1r = x0 * sin + x1 * cos
-        rot = torch.stack([x0r, x1r], -1).reshape(
-            batch_size, num_heads, seq_len, n, d_parity * 2
-        )
-        if head_dim % 2:
-            last = (
-                x[..., -1]
-                .unsqueeze(-1)
-                .unsqueeze(3)
-                .expand(batch_size, num_heads, seq_len, n, 1)
-            )
-            rot = torch.cat([rot, last], -1)
-        return rot.reshape(batch_size, num_heads, seq_len * n, head_dim)
-
-    if mode == "derivative":
-        return derivative_expand(x)
-    if mode == "rotative":
-        return rotative_expand(x)
-    if mode == "combined":
-        return (derivative_expand(x) + rotative_expand(x)) / 2
-    raise ValueError(f"Unknown mode: {mode}")
 
 
 def extract_layer_idx(module_name: str) -> int:
@@ -1348,17 +1475,6 @@ def set_trainable_parameters(
     trainable_layers = [n for n, p in model.named_parameters() if p.requires_grad]
     logger.info("Trainable parameters after freeze: %s", trainable_layers)
     return model
-
-
-def ensure_stability(
-    tensor: torch.Tensor, min_val: float = -1e4, max_val: float = 1e4
-) -> torch.Tensor:
-    """stability forcing"""
-    dtype = tensor.dtype
-    center = (max_val + min_val) / 2
-    tensor = torch.clamp(tensor, min=min_val, max=max_val)
-    tensor = torch.nan_to_num(tensor, nan=center, posinf=max_val, neginf=min_val)
-    return tensor.to(dtype=dtype)
 
 
 def apply_linear_attention_mask(
@@ -1420,10 +1536,10 @@ def truncate_attention_mask(
     return hidden_states, attention_mask
 
 
-def fast_invert_matrix(
+def construct_causal_forward_solver(
     tri_tensor: torch.Tensor, dtype: torch.dtype = torch.float32
 ) -> torch.Tensor:
-    """Equivalent to vectorized forward substitution applied to the identity matrix."""
+    """Forward substitution for fast inversion during chunk propagation."""
     tri_tensor = tri_tensor.to(dtype=dtype).clone()
     chunk_size = tri_tensor.shape[-1]
 
@@ -1486,6 +1602,17 @@ def match_dim(x: torch.Tensor, dim: int, target_size: int) -> torch.Tensor:
         x = F.linear(x, eye)  # pylint: disable=not-callable
     x = torch.moveaxis(x, -1, dim)
     return x
+
+
+def ensure_stability(
+    tensor: torch.Tensor, min_val: float = -1e4, max_val: float = 1e4
+) -> torch.Tensor:
+    """stability forcing"""
+    dtype = tensor.dtype
+    center = (max_val + min_val) / 2
+    tensor = torch.clamp(tensor, min=min_val, max=max_val)
+    tensor = torch.nan_to_num(tensor, nan=center, posinf=max_val, neginf=min_val)
+    return tensor.to(dtype=dtype)
 
 
 def soft_clamp(

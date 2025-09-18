@@ -89,21 +89,21 @@ model_name_mapping = {
 }
 
 variant_name_mapping = {
-    "lora_delta_rule_m0.5_constant": r"$k, +, n_h=1, \alpha=0.5$",
-    "lora_delta_rule_gelu_m0.5_constant": r"$\Delta, k, +, \mathrm{GELU}, n_h=1, \alpha=0.5$",
-    "lora_delta_product_m0.5_constant": r"$\Delta, k, +, n_h=2, \alpha=0.5$",
-    "lora_delta_rule_v_m0.5_constant": r"$v, +, n_h=1, \alpha=0.5$",
-    "lora_delta_rule_kv_m0.5_constant": r"$(k,v), +, n_h=1, \alpha=0.5$",
-    "lora_delta_product_r_m0.5_constant": r"$\Theta, k, +, n_h=2, \alpha=0.5$",
-    "lora_delta_product_c_m0.5_constant": r"$(\Delta,\Theta), k, +, n_h=2, \alpha=0.5$",
-    "lora_delta_product_c_m1.0_constant": r"$(\Delta,\Theta), k, +, n_h=2, \alpha=1.0$",
-    "delta_product_m0.5_constant": r"$\Delta, k, +, n_h=2, \alpha=0.5, \mathrm{LoRA} -$",
-    "lora_cross_delta_product_m0.5_constant": r"$\Delta, k, \odot, n_h=2, \alpha=0.5$",
-    "lora_delta_product_m0.5_gradual": r"$\Delta, k, +, n_h=2, \alpha \in [0, 0.5]$",
-    "lora_delta_product_m0.5_cyclic": r"$\Delta, k, +, n_h=2, \alpha \in \{0, 0.5, 1\}$",
-    "lora_delta_rule_m0.125_constant": r"$ k, +, n_h=1, \alpha=0.125$",
-    "lora_delta_product_m0.125_constant": r"$\Delta, k, +, n_h=2, \alpha=0.125$",
-    "lora_delta_product_m1.0_constant": r"$\Delta, k, +, n_h=2, \alpha=1.0$",
+    "lora_delta_rule_m0.5_constant": r"$k, +, n_h=1, \mu=0.5$",
+    "lora_delta_rule_gelu_m0.5_constant": r"$\Delta, k, +, \mathrm{GELU}, n_h=1, \mu=0.5$",
+    "lora_delta_product_m0.5_constant": r"$\Delta, k, +, n_h=2, \mu=0.5$",
+    "lora_delta_rule_v_m0.5_constant": r"$v, +, n_h=1, \mu=0.5$",
+    "lora_delta_rule_kv_m0.5_constant": r"$(k,v), +, n_h=1, \mu=0.5$",
+    "lora_delta_product_r_m0.5_constant": r"$\Theta, k, +, n_h=2, \mu=0.5$",
+    "lora_delta_product_c_m0.5_constant": r"$(\Delta,\Theta), k, +, n_h=2, \mu=0.5$",
+    "lora_delta_product_c_m1.0_constant": r"$(\Delta,\Theta), k, +, n_h=2, \mu=1.0$",
+    "delta_product_m0.5_constant": r"$\Delta, k, +, n_h=2, \mu=0.5, \mathrm{LoRA} -$",
+    "lora_cross_delta_product_m0.5_constant": r"$\Delta, k, \odot, n_h=2, \mu=0.5$",
+    "lora_delta_product_m0.5_gradual": r"$\Delta, k, +, n_h=2, \mu \in [0, 0.5]$",
+    "lora_delta_product_m0.5_cyclic": r"$\Delta, k, +, n_h=2, \mu \in \{0, 0.5, 1\}$",
+    "lora_delta_rule_m0.125_constant": r"$ k, +, n_h=1, \mu=0.125$",
+    "lora_delta_product_m0.125_constant": r"$\Delta, k, +, n_h=2, \mu=0.125$",
+    "lora_delta_product_m1.0_constant": r"$\Delta, k, +, n_h=2, \mu=1.0$",
 }
 
 
