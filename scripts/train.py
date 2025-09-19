@@ -456,11 +456,11 @@ def get_model_trainer(cfg: dict, token: str = None):
         quantization_config=bnb_config,
     )
 
-    print(f"🔥 Model : \n {model}")
+    # print(f"🔥 Model : \n {model}")
 
-    model = torch.compile(model)
+    # model = torch.compile(model)
 
-    print(f"🔥 Model Compiled for training !")  # not tested !!!
+    # print(f"🔥 Model Compiled for training !")  # not tested !!!
 
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
