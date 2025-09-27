@@ -8,6 +8,45 @@ from src.tptt.modeling_tptt import LiZAttention
 from src.tptt.train_tptt import LiZACallback, SaveBestModelCallback, ensure_int
 
 
+class DummyMemoryGate:
+    def __init__(self):
+        self._mag_weight = 0.5
+
+    @property
+    def mag_weight(self):
+        if hasattr(self._mag_weight, "item"):
+            return float(self._mag_weight.item())
+        return self._mag_weight
+
+    @mag_weight.setter
+    def mag_weight(self, value):
+        if hasattr(value, "item"):
+            value = float(value.item())
+        self._mag_weight = value
+
+
+class DummyLiZAttention:
+    def __init__(self):
+        self.memory_gate = DummyMemoryGate()
+        self.disable_linear_attn = False
+
+    @property
+    def mag_weight(self):
+        return self.memory_gate.mag_weight
+
+    @mag_weight.setter
+    def mag_weight(self, value):
+        self.memory_gate.mag_weight = value
+
+
+class DummyModel:
+    def __init__(self, modules):
+        self._modules = modules
+
+    def named_modules(self):
+        return [(f"liz{i}", module) for i, module in enumerate(self._modules)]
+
+
 @pytest.mark.parametrize(
     "global_step, expected_disable, msg",
     [
@@ -31,35 +70,123 @@ def test_lizacallback_switch_mode_param(global_step, expected_disable, msg):
     assert liz.disable_linear_attn is expected_disable, msg
 
 
+def test_callback_updates_multiple_modules():
+    "Test callback update during training with multiple LiZAttention modules."
+    liz1 = DummyLiZAttention()
+    liz2 = DummyLiZAttention()
+    model = DummyModel([liz1, liz2])
+
+    callback = LiZACallback(model, transition_step=100)
+
+    class DummyState:
+        global_step = 50
+
+    state = DummyState()
+
+    callback.on_step_end(None, state, None)
+
+    expected = 0.0 + (0.5 - 0.0) * (50 / 100)
+    assert abs(liz1.mag_weight - expected) < 1e-6
+    assert abs(liz2.mag_weight - expected) < 1e-6
+
+
+def test_adjust_mag_weight_callback_simple():
+    "Test mag_weight adjustment by callback during training."
+    liz = DummyLiZAttention()
+    model = DummyModel([liz])
+
+    callback = LiZACallback(
+        model, initial_weight=0.1, final_weight=0.5, transition_step=100
+    )
+
+    class DummyState:
+        global_step = 50
+
+    state = DummyState()
+
+    callback.on_step_end(None, state, None)
+
+    expected = 0.1 + (0.5 - 0.1) * (50 / 100)
+    assert abs(liz.mag_weight - expected) < 1e-6
+
+
+def test_callback_handles_tuple_parameters():
+    "Test callback parameters as tuples are handled correctly."
+    liz = DummyLiZAttention()
+    model = DummyModel([liz])
+
+    callback = LiZACallback(
+        model, initial_weight=(0.1,), final_weight=(0.5,), transition_step=(100,)
+    )
+
+    class DummyState:
+        global_step = 50
+
+    state = DummyState()
+
+    callback.on_step_end(None, state, None)
+
+    expected = 0.1 + (0.5 - 0.1) * (50 / 100)
+    assert abs(liz.mag_weight - expected) < 1e-6
+
+
+def test_callback_handles_tensor_steps():
+    "Test callback handles PyTorch tensor global_step."
+    liz = DummyLiZAttention()
+    model = DummyModel([liz])
+
+    callback = LiZACallback(model, transition_step=100)
+
+    class DummyTensorStep:
+        def item(self):
+            return 50
+
+    class DummyState:
+        global_step = DummyTensorStep()
+
+    state = DummyState()
+
+    callback.on_step_end(None, state, None)
+
+    expected = 0.0 + (0.5 - 0.0) * (50 / 100)
+    assert abs(liz.mag_weight - expected) < 1e-6
+
+
 def test_gradual_sets_final_weight_after_transition():
-    """Test mag_weight is set to final_weight after transition_step."""
-    liz = MagicMock(spec=LiZAttention)
-    model = MagicMock()
-    model.named_modules.return_value = [("liz", liz)]
+    "Test mag_weight equals final_weight after transition step."
+    liz = DummyLiZAttention()
+    model = DummyModel([liz])
     callback = LiZACallback(
         model, initial_weight=0.2, final_weight=0.6, transition_step=10
     )
-    # Global step bigger than transition_step
-    state = MagicMock()
-    state.global_step = 15
+
+    class DummyState:
+        global_step = 15
+
+    state = DummyState()
+
     callback.on_step_end(None, state, None)
-    # Should be set to final_weight
-    assert liz.mag_weight == 0.6
+
+    assert abs(liz.mag_weight - 0.6) < 1e-6
 
 
 def test_lizacallback_cyclic_mode():
-    """Test LiZACallback cyclic mode cycles through weight list."""
-    liz = MagicMock(spec=LiZAttention)
-    model = MagicMock()
-    model.named_modules.return_value = [("liz", liz)]
+    "Test cyclic mode cycles through weights in callback."
+    liz = DummyLiZAttention()
+    model = DummyModel([liz])
 
     weights = [0.3, 0.7, 0.5]
     callback = LiZACallback(model, mode="cyclic", weight_list=weights)
-    state = MagicMock()
-    for i, _ in enumerate(weights * 2):  # Extra cycles
+
+    class DummyState:
+        global_step = 0
+
+    state = DummyState()
+
+    for i in range(len(weights) * 2):  # 2 cycles
         state.global_step = i
         callback.on_step_end(None, state, None)
-        assert liz.mag_weight == weights[i % len(weights)]
+        assert abs(liz.mag_weight - weights[i % len(weights)]) < 1e-6
 
 
 def test_lizacallback_raises_on_unknown_mode():
@@ -117,61 +244,6 @@ def test_ensure_int_handles_tensor_like():
     assert ensure_int(42) == 42
 
 
-def test_adjust_mag_weight_callback_simple():
-    """Test mag weight adjustment during mock training"""
-    liz = MagicMock(spec=LiZAttention)
-    model = MagicMock()
-    model.named_modules.return_value = [("liz", liz)]
-
-    callback = LiZACallback(
-        model, initial_weight=0.1, final_weight=0.5, transition_step=100
-    )
-    state = MagicMock()
-    state.global_step = 50
-
-    callback.on_step_end(None, state, None)
-
-    expected = 0.1 + (0.5 - 0.1) * (50 / 100)
-    assert liz.mag_weight == expected
-
-
-def test_callback_handles_tuple_parameters():
-    """Test special parameter callback from Trainer"""
-    liz = MagicMock(spec=LiZAttention)
-    model = MagicMock()
-    model.named_modules.return_value = [("liz", liz)]
-
-    # Test avec paramètres sous forme de tuples
-    callback = LiZACallback(
-        model, initial_weight=(0.1,), final_weight=(0.5,), transition_step=(100,)
-    )
-
-    state = MagicMock(global_step=50)
-    callback.on_step_end(None, state, None)
-
-    expected = 0.1 + (0.5 - 0.1) * (50 / 100)
-    assert liz.mag_weight == expected
-
-
-def test_callback_handles_tensor_steps():
-    """Test expected tensor from mag step"""
-    liz = MagicMock(spec=LiZAttention)
-    model = MagicMock()
-    model.named_modules.return_value = [("liz", liz)]
-
-    callback = LiZACallback(model, transition_step=100)
-
-    # Simule un tensor PyTorch
-    state = MagicMock()
-    state.global_step = MagicMock()
-    state.global_step.item.return_value = 50  # pylint: disable=no-member
-
-    callback.on_step_end(None, state, None)
-
-    expected = 0.0 + (0.5 - 0.0) * (50 / 100)
-    assert liz.mag_weight == expected
-
-
 def test_callback_logs_mag_weight():
     """Test monitoring mag logs"""
     liz = MagicMock(spec=LiZAttention)
@@ -185,23 +257,6 @@ def test_callback_logs_mag_weight():
     callback.on_log(None, None, None, logs)
 
     assert logs["mag_weight"] == 0.3
-
-
-def test_callback_updates_multiple_modules():
-    """Test callback update during training"""
-    liz1 = MagicMock(spec=LiZAttention)
-    liz2 = MagicMock(spec=LiZAttention)
-    model = MagicMock()
-    model.named_modules.return_value = [("liz1", liz1), ("liz2", liz2)]
-
-    callback = LiZACallback(model, transition_step=100)
-    state = MagicMock(global_step=50)
-
-    callback.on_step_end(None, state, None)
-
-    expected = 0.0 + (0.5 - 0.0) * (50 / 100)
-    assert liz1.mag_weight == expected
-    assert liz2.mag_weight == expected
 
 
 @pytest.mark.parametrize(

@@ -50,150 +50,6 @@ def dummy_tensor():
     return torch.randn(2, 4, 12)
 
 
-def make_liza_with_base_attn(base_attn):
-    """Helper to create a LiZAttention object with only required config."""
-    mock_config = MagicMock()
-    # Fake attributes for attention params
-    mock_config.hidden_size = 12 * 4  # 4 heads * 12 dim
-    mock_config.num_heads = 4
-    mock_config.num_key_value_heads = 4
-    return LiZAttention(base_attn=base_attn, layer_idx=0, base_config=mock_config)
-
-
-def test_proj_c_attn_and_c_proj():
-    """Test GPT-2 style branch: c_attn and c_proj attributes."""
-    t = torch.randn(2, 4, 36)  # will chunk into 3 tensors of shape (2,4,12)
-    base_attn = MagicMock()
-    base_attn.c_attn = MagicMock(return_value=t)
-    base_attn.c_proj = MagicMock()
-    # Remove interfering attributes
-    for n in ["q_proj", "qkv_proj", "query", "key", "value", "dense"]:
-        if hasattr(base_attn, n):
-            delattr(base_attn, n)
-    liz = make_liza_with_base_attn(base_attn)
-    q, k, v, out_proj = liz._apply_shared_projections(torch.randn(2, 4, 12))
-    base_attn.c_attn.assert_called_once()
-    assert out_proj == base_attn.c_proj
-    assert q.shape == k.shape == v.shape
-
-
-def test_proj_query_key_value_with_dense():
-    """Test BERT/ViT style: query, key, value and dense (output projection)."""
-    t = dummy_tensor()
-    base_attn = MagicMock()
-    base_attn.query = MagicMock(return_value=t)
-    base_attn.key = MagicMock(return_value=t)
-    base_attn.value = MagicMock(return_value=t)
-    base_attn.dense = MagicMock()  # output
-    # Remove interfering attributes
-    for n in ["q_proj", "k_proj", "v_proj", "o_proj", "qkv_proj", "c_attn", "c_proj"]:
-        if hasattr(base_attn, n):
-            delattr(base_attn, n)
-    liz = make_liza_with_base_attn(base_attn)
-    q, k, v, out_proj = liz._apply_shared_projections(torch.randn(2, 4, 12))
-    base_attn.query.assert_called_once()
-    base_attn.key.assert_called_once()
-    base_attn.value.assert_called_once()
-    assert out_proj == base_attn.dense
-    assert q.shape == k.shape == v.shape
-
-
-def test_proj_query_key_value_without_dense():
-    """Test BERT/ViT style: query, key, value present, but no dense projection."""
-    t = dummy_tensor()
-    base_attn = MagicMock()
-    base_attn.query = MagicMock(return_value=t)
-    base_attn.key = MagicMock(return_value=t)
-    base_attn.value = MagicMock(return_value=t)
-    # Do NOT set .dense output
-    for n in [
-        "q_proj",
-        "k_proj",
-        "v_proj",
-        "o_proj",
-        "qkv_proj",
-        "c_attn",
-        "c_proj",
-        "dense",
-    ]:
-        if hasattr(base_attn, n):
-            delattr(base_attn, n)
-    liz = make_liza_with_base_attn(base_attn)
-    q, k, v, out_proj = liz._apply_shared_projections(torch.randn(2, 4, 12))
-    base_attn.query.assert_called_once()
-    base_attn.key.assert_called_once()
-    base_attn.value.assert_called_once()
-    assert out_proj is None
-    assert q.shape == k.shape == v.shape
-
-
-def test_proj_raises_if_no_supported_proj():
-    """Test ValueError when no valid projection attributes found."""
-    base_attn = MagicMock()
-    # Remove all known projection attributes
-    for n in [
-        "q_proj",
-        "k_proj",
-        "v_proj",
-        "o_proj",
-        "qkv_proj",
-        "c_attn",
-        "c_proj",
-        "query",
-        "key",
-        "value",
-        "dense",
-    ]:
-        if hasattr(base_attn, n):
-            delattr(base_attn, n)
-    liz = make_liza_with_base_attn(base_attn)
-    with pytest.raises(ValueError, match="Unsupported attention module"):
-        liz._apply_shared_projections(torch.randn(2, 4, 12))
-
-
-def test_apply_shared_projections_q_proj():
-    """Test branch with q_proj, k_proj, v_proj, o_proj."""
-    t = dummy_tensor()
-    base_attn = MagicMock()
-    base_attn.q_proj.return_value = t
-    base_attn.k_proj.return_value = t
-    base_attn.v_proj.return_value = t
-    base_attn.o_proj = MagicMock()
-
-    liz = make_liza_with_base_attn(base_attn)
-    _, _, _, out_proj = liz._apply_shared_projections(t)
-    base_attn.q_proj.assert_called_once_with(t)
-    base_attn.k_proj.assert_called_once_with(t)
-    base_attn.v_proj.assert_called_once_with(t)
-    assert out_proj == base_attn.o_proj
-
-
-def test_apply_shared_projections_qkv_proj():
-    """Test only the qkv_proj branch."""
-    t = torch.randn(2, 4, 36)
-    base_attn = MagicMock()
-    base_attn.qkv_proj = MagicMock(return_value=t)
-    base_attn.out_proj = MagicMock()
-    for n in [
-        "q_proj",
-        "k_proj",
-        "v_proj",
-        "o_proj",
-        "c_attn",
-        "c_proj",
-        "query",
-        "key",
-        "value",
-        "dense",
-    ]:
-        if hasattr(base_attn, n):
-            delattr(base_attn, n)
-    liz = make_liza_with_base_attn(base_attn)
-    _, _, _, out_proj = liz._apply_shared_projections(t)
-    base_attn.qkv_proj.assert_called_once_with(t)
-    assert out_proj == base_attn.out_proj
-
-
 # --- _get_attention_parameters ---
 
 
@@ -263,13 +119,15 @@ def test_apply_mag_classic(monkeypatch):
         mag_weight = 0.6
         cross_gate = False
         force_stable = False
+        disable_linear_attn = False
 
     liz = DummyLiz()
     # simulate padding, last dim as features
     liz._apply_mag = LiZAttention._apply_mag.__get__(liz)
+    mag_weight = torch.tensor(liz.mag_weight)
     o_lin = torch.ones(2, 5, 3)
     o_base = torch.ones(2, 4, 3)
-    out = liz._apply_mag(o_lin, o_base)
+    out = liz._apply_mag(mag_weight, o_lin, o_base)
     assert out.shape == (2, 4, 3)
     assert torch.allclose(out, torch.ones_like(out))
 
@@ -405,11 +263,11 @@ def test_prepare_attn_mixin_base_scale(monkeypatch):
 def test_apply_mag_cross_gate(monkeypatch):
     """Test cross_gate True logic."""
     liz = make_liza_for_process(monkeypatch)
-    liz.mag_weight = 0.5
     liz.cross_gate = True
+    mag_weight = 0.5
     o_lin = torch.ones(2, 4, 3)
     o_base = torch.zeros(2, 4, 3)
-    out = liz._apply_mag(o_lin, o_base)
+    out = liz._apply_mag(mag_weight, o_lin, o_base)
     # Result: out = o_lin*mag + o_base*(1-mag) + same*cross = o_lin*0.5 + cross_terms
     assert torch.any(out != 0)
 
@@ -443,7 +301,7 @@ def test_forward_main_logic(monkeypatch):
         liz, "_process_self_attn", lambda x, y, z: (torch.zeros(2, 2, 2), None, None, 1)
     )
     monkeypatch.setattr(liz, "_prepare_attn_mixin", lambda x, y, z, eps: (x, y))
-    monkeypatch.setattr(liz, "_apply_mag", lambda x, y: torch.zeros(2, 2, 2))
+    monkeypatch.setattr(liz, "_apply_mag", lambda x, y, z: torch.zeros(2, 2, 2))
     hs = torch.zeros(2, 2, 2)
     result = liz.forward(hs)
     assert result.shape == (2, 2, 2)
@@ -479,7 +337,7 @@ def test_forward_expected_attn_modes(monkeypatch):
         ),
     )
     monkeypatch.setattr(liz, "_prepare_attn_mixin", lambda x, y, z, eps: (x, y))
-    monkeypatch.setattr(liz, "_apply_mag", lambda x, y: torch.zeros(2, 2, 2))
+    monkeypatch.setattr(liz, "_apply_mag", lambda x, y, z: torch.zeros(2, 2, 2))
     hs = torch.zeros(2, 2, 2)
     out = liz.forward(hs)
     # When mode==3, return tuple of 3
@@ -533,12 +391,12 @@ def test_apply_mag_logs_when_close(monkeypatch, caplog):
     """Test that logger.info triggers if output_attention and softmax_weighted are close."""
 
     liz = LiZAttention(MagicMock(), 0, MagicMock(hidden_size=16))
-    liz.mag_weight = 0.0  # so output = softmax_weighted
     liz.cross_gate = False
+    mag_weight = 0.0  # so output = softmax_weighted
     o_lin = torch.zeros(2, 2, 2)
     o_base = torch.ones(2, 2, 2)
     with caplog.at_level("INFO"):
-        liz._apply_mag(o_lin, o_base)
+        liz._apply_mag(mag_weight, o_lin, o_base)
     # Check that the log message was emitted
     assert "[LOG] layer" in caplog.text
 
@@ -566,7 +424,7 @@ def test_forward_elif_use_cache_path(monkeypatch):
         liz, "_process_self_attn", lambda x, y, z: (torch.zeros(2, 2, 2), None, None, 1)
     )
     monkeypatch.setattr(liz, "_prepare_attn_mixin", lambda x, y, z, eps: (x, y))
-    monkeypatch.setattr(liz, "_apply_mag", lambda x, y: torch.zeros(2, 2, 2))
+    monkeypatch.setattr(liz, "_apply_mag", lambda x, y, z: torch.zeros(2, 2, 2))
     liz.train(False)  # Switch to eval
     hs = torch.zeros(2, 2, 2)
     # Call with a kwarg "past_key_value" but NO "use_cache"

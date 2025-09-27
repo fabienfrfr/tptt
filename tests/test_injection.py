@@ -14,4 +14,4 @@ def test_inject_linear_attention_replaces_module(dummy_decoder, dummy_config):
         mag_weight=0.7,
     )
     assert isinstance(injected.self_attn, LiZAttention)
-    assert injected.self_attn.mag_weight == 0.7
+    assert injected.self_attn.memory_gate.mag_weight == 0.7

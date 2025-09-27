@@ -68,30 +68,91 @@ class LCache:
         self.inputs_states.clear()
 
 
-class CausalAvgPool1d(nn.Module):
-    """Causal sliding window average (uniform, no shape loss along sequence)"""
+class CausalConv1d(nn.Module):
+    """Causal 1D convolution (with offset)."""
 
     def __init__(
-        self, output_size: int, offsets: tuple[int] = (0, 1, 2), mode: str = "replicate"
+        self,
+        in_channels,
+        out_channels,
+        kernel_size,
+        dilation=1,
+        offset=0,
+        padding_mode="constant",
+        padding_value=0,
+    ):
+
+        super().__init__()
+        self.offset = offset
+        self.kernel_size = kernel_size
+        self.dilation = dilation
+        self.padding_mode = padding_mode
+        self.padding_value = padding_value
+        self.left_pad = (kernel_size - 1) * dilation + max(0, offset)
+        self.conv1d = nn.Conv1d(
+            in_channels,
+            out_channels,
+            kernel_size,
+            padding=0,
+            dilation=dilation,
+            groups=in_channels,
+        )
+        start_idx = max(0, -offset)
+        self.output_slice = slice(start_idx, None)
+
+    def forward(self, x):
+        """Input shape: [B, F, S], output shape: [B, F, S]"""
+        # Pad left only
+        x = F.pad(
+            x, (self.left_pad, 0), mode=self.padding_mode, value=self.padding_value
+        )
+        out = self.conv1d(x)
+        return out[:, :, self.output_slice]
+
+
+class CausalAvgPool1d(nn.Module):
+    """Causal sliding window average (uniform)."""
+
+    def __init__(
+        self,
+        input_size: int,
+        output_size: Optional[int] = None,
+        kernel_size=3,
+        dilation=1,
+        padding_mode="replicate",
+        offset=0,
     ):
         super().__init__()
-        self.offsets = offsets
-        self.mode = mode
-        self.pool = nn.AdaptiveAvgPool1d(output_size=output_size)
+        if output_size is None:
+            output_size = input_size
+        self.input_size = input_size
+        self.output_size = output_size
+        self.kernel_size = kernel_size
+        self.causal_conv = CausalConv1d(
+            input_size,
+            input_size,
+            kernel_size=kernel_size,
+            dilation=dilation,
+            padding_mode=padding_mode,
+            offset=offset,
+        )
+        with torch.no_grad():
+            avg_kernel = torch.full(
+                (input_size, 1, kernel_size), fill_value=1 / kernel_size
+            )
+            self.causal_conv.conv1d.weight.copy_(avg_kernel)
+            self.causal_conv.conv1d.weight.requires_grad = False
+            if self.causal_conv.conv1d.bias is not None:
+                self.causal_conv.conv1d.bias.zero_()
+                self.causal_conv.conv1d.bias.requires_grad = False
+        self.pool = nn.AdaptiveAvgPool1d(output_size)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """x: [B, S, F] → [B, S, F → output_size]"""
-        x_ = x.transpose(1, 2)  # [B, F, S]
-        idxs = torch.tensor(self.offsets, device=x.device)
-        ksize = idxs.max() - idxs.min() + 1
-        w = torch.zeros(ksize, device=x.device, dtype=x.dtype)
-        w[idxs - idxs.min()] = 1 / len(self.offsets)  # Always uniform weights
-        kernel = w.repeat(x_.shape[1], 1).reshape(x_.shape[1], 1, ksize)
-        pad_left = -idxs.min().item()
-        pad_right = (ksize - 1) - pad_left
-        x_pad = F.pad(x_, (pad_left, pad_right), mode=self.mode)
-        y = F.conv1d(x_pad, kernel, groups=x_.shape[1])  # pylint: disable=not-callable
-        return self.pool(y.transpose(1, 2))  # [B, S, F → output_size]
+    def forward(self, x):
+        """Input shape: [B, S, F], output shape: [B, output_size, F]"""
+        # x expected shape: [B, S, F]
+        x = x.transpose(1, 2)  # transpose to [B, F, S] for Conv1d
+        y = self.causal_conv(x).transpose(1, 2)  # [B, S, F]
+        return self.pool(y)  # [B, S, F → output_size]
 
 
 class VirtualTokenExpander(nn.Module):
@@ -234,14 +295,9 @@ class LinearAttention(nn.Module):
         linear_cache: Optional[LCache] = None,
         max_chunk_size: int = 64,
         bidirectional: bool = False,  # not used if causal
-        pooling_config: Optional[Dict[str, Any]] = None,
+        pooling_config: Optional[Dict[str, Any]] = {},  # todo
     ):
         super().__init__()
-        if pooling_config is None:
-            pooling_config = {
-                "offsets": (0, 1, 2),
-                "mode": "replicate",
-            }
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
         self.head_dim = head_dim or hidden_dim // num_heads
@@ -288,8 +344,8 @@ class LinearAttention(nn.Module):
         self.bidirectional = bidirectional
         # Causal average pooling for gating
         self.pooling_config = pooling_config
-        self.pool_g = CausalAvgPool1d(
-            output_size=self.head_dim * self.num_key_value_heads, **pooling_config
+        self.pool_g = CausalAvgPool1d(self.head_dim * self.num_key_value_heads).to(
+            dtype=linear_precision
         )
         # Trick for n-houselholder product
         self.virtual_token_expander = VirtualTokenExpander(
@@ -557,6 +613,45 @@ class LinearAttention(nn.Module):
         return out
 
 
+class MemoryAsGate(nn.Module):
+    """Memory as Gate module, for linear and vanilla attention mixing."""
+
+    def __init__(self, hidden_dim=None, mode="constant", mag_ratio=0.5):
+        super().__init__()
+        self.min_val = 0.1
+        self.max_val = 0.9
+        self.mode = mode if hidden_dim is not None else "constant"
+        self.hidden_dim = hidden_dim
+        self.mag_weight = torch.tensor(mag_ratio)
+        if mode == "constant":
+            self.dynamic_gate = None
+        elif mode == "dynamic":
+            self.dynamic_gate = CausalConv1d(
+                in_channels=hidden_dim, out_channels=1, kernel_size=16
+            )
+        else:
+            raise ValueError(f"Unknown MaG mode {mode}")
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        """Compute the gate ratio."""
+        mag_weight = self.mag_weight.to(
+            dtype=hidden_states.dtype, device=hidden_states.device
+        )
+        if self.mode == "constant":
+            shape = list(hidden_states.shape)
+            shape[-1] = 1
+            gate_ratio = mag_weight.expand(*shape)
+        elif self.mode == "dynamic":
+            # hidden_states shape: [B, S, D]
+            logits = self.dynamic_gate(hidden_states.transpose(1, 2)).transpose(
+                1, 2
+            )  # [B, S, 1]
+            gate_ratio = torch.sigmoid(logits)
+            min_val, max_val = self.min_val, self.max_val
+            gate_ratio = min_val + (max_val - min_val) * gate_ratio
+        return gate_ratio
+
+
 class LiZAttention(nn.Module):
     """LiZA Linear Attention module, mixing linear and vanilla attention."""
 
@@ -589,13 +684,13 @@ class LiZAttention(nn.Module):
         self.layer_idx = layer_idx
         self.max_self_attn_length = max_self_attn_length
         self.base_scale_attn = base_scale_attn
-        self.mag_weight = mag_weight
         self.cross_gate = cross_gate
         self.max_chunk_size = max_chunk_size
         self.linear_precision = linear_precision
         self.padding_side = padding_side
         self.disable_linear_attn = disable_linear_attn
 
+        # Attention parameters
         (
             self.num_heads,
             self.head_dim,
@@ -604,6 +699,11 @@ class LiZAttention(nn.Module):
             self.hidden_dim,
         ) = self._get_attention_parameters(base_attn, base_config)
         self.scaling = self.head_dim**-0.5
+
+        # MaG parameters
+        self.memory_gate = MemoryAsGate(
+            self.hidden_dim, mode="constant", mag_ratio=mag_weight
+        )
 
         self.linear_attn = LinearAttention(
             layer_idx=layer_idx,
@@ -765,9 +865,16 @@ class LiZAttention(nn.Module):
         return o_lin, o_base
 
     def _apply_mag(
-        self, linear_attention: torch.Tensor, softmax_attention: torch.Tensor
+        self,
+        mag_weight: torch.Tensor,
+        linear_attention: torch.Tensor,
+        softmax_attention: torch.Tensor,
     ) -> torch.Tensor:
         """Apply the MAG strategy"""
+        # Ablation option
+        if self.disable_linear_attn:
+            return softmax_attention
+
         # Left-Padding management
         if linear_attention.shape[1] != softmax_attention.shape[1]:
             left_trunc = min(linear_attention.shape[1], softmax_attention.shape[1])
@@ -775,12 +882,7 @@ class LiZAttention(nn.Module):
                 linear_attention[:, -left_trunc:],
                 softmax_attention[:, -left_trunc:],
             )
-        # NAM : Neural Attention Mixer (with graph forcing)
-        mag_weight = torch.tensor(
-            self.mag_weight,
-            dtype=softmax_attention.dtype,
-            device=softmax_attention.device,
-        )
+        # NAM : Neural Attention Mixer (Element-wise mix)
         softmax_weighted = (1 - mag_weight) * softmax_attention
         linear_weighted = mag_weight * linear_attention
         if self.cross_gate:
@@ -806,7 +908,7 @@ class LiZAttention(nn.Module):
     ) -> torch.Tensor:
         """Mix linear and self attention forward"""
         device = hidden_states.device
-        tensor_dtype = hidden_states.dtype
+        dtype = hidden_states.dtype
         self.base_attn.to(device)
 
         if self.training:
@@ -832,10 +934,11 @@ class LiZAttention(nn.Module):
         )
 
         # Prepare output mixing
-        o_lin, o_base = self._prepare_attn_mixin(o_lin, o_base, tensor_dtype, eps=1e-5)
+        o_lin, o_base = self._prepare_attn_mixin(o_lin, o_base, dtype, eps=1e-5)
 
         # Apply Memory as Gate in self-attention (with length management and ablation)
-        out = o_base if self.disable_linear_attn else self._apply_mag(o_lin, o_base)
+        mag_weight = self.memory_gate(hidden_states)
+        out = self._apply_mag(mag_weight, o_lin, o_base)
 
         # Return output following transformer convention
         if expected_attn_mode == 3:

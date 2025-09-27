@@ -12,6 +12,8 @@ from transformers import AutoTokenizer, PretrainedConfig, PreTrainedModel
 from src.tptt.configuration_tptt import TpttConfig
 from src.tptt.modeling_tptt import (
     LCache,
+    CausalConv1d,
+    CausalAvgPool1d,
     LinearAttention,
     LinearAttentionOp,
     LiZAttention,
@@ -454,3 +456,29 @@ def linear_operator():
         max_chunk_size=6,
         linear_precision=torch.float32,
     )
+
+
+@pytest.fixture
+def causal_avgpool():
+    """Fixture that returns a default instance of CausalAvgPool1d"""
+    return CausalAvgPool1d(input_size=16, output_size=4)
+
+
+@pytest.fixture
+def causal_conv1d():
+    """
+    Fixture for initializing CausalConv1d with a fixed kernel for deterministic testing.
+    """
+    module = CausalConv1d(
+        in_channels=1,
+        out_channels=1,
+        kernel_size=3,
+        dilation=1,
+        offset=0,
+        padding_mode="replicate",
+    )
+    # Set weights to average for easier expected calculation
+    with torch.no_grad():
+        module.conv1d.weight[:] = torch.tensor([[[1 / 3, 1 / 3, 1 / 3]]])
+        module.conv1d.bias[:] = 0
+    return module

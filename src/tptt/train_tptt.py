@@ -1,11 +1,10 @@
 # pylint: disable=too-many-arguments, too-many-positional-arguments
-
 """
 Author : Fabien FURFARO
 """
 
 from typing import Optional, Union
-
+import torch
 from transformers import PreTrainedModel, TrainerCallback
 
 from .modeling_tptt import LiZAttention
@@ -72,8 +71,8 @@ class LiZACallback(TrainerCallback):
             # Set mag_weight to final_weight for constant mode
             weight = self.final_weight
             for _, module in self.model.named_modules():
-                if isinstance(module, LiZAttention):
-                    module.mag_weight = weight
+                if hasattr(module, "memory_gate"):
+                    module.memory_gate.mag_weight = torch.tensor(weight)
 
         elif self.mode == "gradual":
             if current_step <= transition_step:
@@ -83,15 +82,15 @@ class LiZACallback(TrainerCallback):
             else:
                 weight = self.final_weight
             for _, module in self.model.named_modules():
-                if isinstance(module, LiZAttention):
-                    module.mag_weight = weight
+                if hasattr(module, "memory_gate"):
+                    module.memory_gate.mag_weight = torch.tensor(weight)
 
         elif self.mode == "cyclic":
             idx = current_step % len(self.weight_list)
             weight = self.weight_list[idx]
             for _, module in self.model.named_modules():
-                if isinstance(module, LiZAttention):
-                    module.mag_weight = weight
+                if hasattr(module, "memory_gate"):
+                    module.memory_gate.mag_weight = torch.tensor(weight)
 
         elif self.mode == "switch":
             # Alternately enable/disable linear attention every switch_period steps
@@ -99,6 +98,12 @@ class LiZACallback(TrainerCallback):
             for _, module in self.model.named_modules():
                 if isinstance(module, LiZAttention):
                     module.disable_linear_attn = disable
+
+        elif self.mode == "ramp":
+            # Ramp mag_weight from 0 to 1 over transition_step steps
+            ramp = torch.linspace(0, 1, steps=seq_len, device=device, dtype=dtype)
+            progress = min(current_step / transition_step, 1.0)
+            new_weights = progress * ramp
 
         else:
             raise ValueError(f"Unknown mode: {self.mode}")
