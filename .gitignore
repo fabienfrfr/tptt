@@ -17,3 +17,14 @@ __pycache__/
 
 docs/build/
 docs/_build/
+
+htmlcov/
+.vscode/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+
+*.lock
+
+extract/full_project.md
