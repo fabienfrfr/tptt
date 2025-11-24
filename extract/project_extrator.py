@@ -9,12 +9,14 @@ structured to capture the full project context for LLM analysis.
 import os
 import pathspec
 
+
 def load_gitignore_patterns(gitignore_path=".gitignore"):
     """Load .gitignore patterns and return a PathSpec object for matching."""
     with open(gitignore_path, "r") as f:
         patterns = f.read().splitlines()
     spec = pathspec.PathSpec.from_lines("gitwildmatch", patterns)
     return spec
+
 
 def get_language_from_extension(filename):
     """Map file extensions to language names for Markdown code blocks."""
@@ -34,6 +36,7 @@ def get_language_from_extension(filename):
         ".md": "markdown",
     }
     return lang_map.get(ext, "text")
+
 
 def build_directory_tree_markdown(root_dir, gitignore_spec, exclude_dirs=None):
     """Generate a Markdown-formatted directory tree, respecting .gitignore and exclusions."""
@@ -68,7 +71,10 @@ def build_directory_tree_markdown(root_dir, gitignore_spec, exclude_dirs=None):
             tree_lines.append(f"{indent}  - {f}")
     return "\n".join(tree_lines)
 
-def extract_project_text_to_markdown(root_dir, output_file, gitignore_spec, exclude_dirs=None):
+
+def extract_project_text_to_markdown(
+    root_dir, output_file, gitignore_spec, exclude_dirs=None
+):
     """Extract text from all project files and save to a Markdown file."""
     exclude_dirs = exclude_dirs or []
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
@@ -107,12 +113,15 @@ def extract_project_text_to_markdown(root_dir, output_file, gitignore_spec, excl
                 except Exception as e:
                     print(f"Could not read {filepath}: {e}")
 
+
 if __name__ == "__main__":
     root_dir = "./"
     output_file = "./extract/full_project.md"
     gitignore_spec = load_gitignore_patterns(os.path.join(root_dir, ".gitignore"))
     # Do not traverse .git or extract (output directory)
     extract_project_text_to_markdown(
-        root_dir, output_file, gitignore_spec, exclude_dirs=[".git", "extract"]
+        root_dir,
+        output_file,
+        gitignore_spec,
+        exclude_dirs=[".git", "LICENSE", "extract", "docs"],
     )
-
