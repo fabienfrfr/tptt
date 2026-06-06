@@ -1,5 +1,9 @@
 .PHONY: install test clean lint coverage coverage-html build publish docs sys-deps
 
+code-mapper: ## Export project structure to JSON
+	uv run python3 libs/code_mapper.py --to-json
+
+## Start to switch to uv management 
 install:
 	pip install -r requirements.txt
 
