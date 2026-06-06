@@ -355,6 +355,9 @@ class LinearAttention(nn.Module):
             recurrent_config["trick"],
         )
 
+        # Specifics training mode (state-aware training, multistream memory, etc.)
+        self.force_cache = False
+
     def get_cache(self, use_cache: bool) -> Tuple[
         Optional[torch.Tensor],
         Optional[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]],
@@ -539,7 +542,7 @@ class LinearAttention(nn.Module):
         q, k, v = self.prepare_attention_input(q, k, v)
 
         # Retrieve cache for generation
-        use_cache = kwargs.get("use_cache", False)
+        use_cache = kwargs.get("use_cache", False) or self.force_cache
         recurrent_state, qkvg = self.get_cache(use_cache)
 
         if qkvg is not None and qkvg[0].shape[-1] == q.shape[-1]:
@@ -723,6 +726,7 @@ class LiZAttention(nn.Module):
             bidirectional=bidirectional,
             pooling_config=pooling_config,
         )
+
 
     def _get_attention_parameters(
         self, base_attn: nn.Module, base_config: PretrainedConfig

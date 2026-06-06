@@ -19,7 +19,7 @@ class LiZACallback(TrainerCallback):
         - "cyclic": alternate between values in weight_list at each step.
         - "switch": alternately enable/disable linear attention at each step.
     
-    Cache memory Noise (TODO **) :
+    Cache memory Noise (TODO and create RecurrentCallback**) NEED TO FORCE CACHE IN LinearAttention :
         - None : No influence of Recurrent_state during training (classic)
         - "simple" : Use last previous batch S_t injected in next batch
         - "sum" : Use "sum" of previous batch S_t injected in next batch (multiple memory hack)
