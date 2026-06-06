@@ -18,6 +18,12 @@ class LiZACallback(TrainerCallback):
         - "gradual": linear interpolation from initial_weight to final_weight.
         - "cyclic": alternate between values in weight_list at each step.
         - "switch": alternately enable/disable linear attention at each step.
+    
+    Cache memory Noise (TODO **) :
+        - None : No influence of Recurrent_state during training (classic)
+        - "simple" : Use last previous batch S_t injected in next batch
+        - "sum" : Use "sum" of previous batch S_t injected in next batch (multiple memory hack)
+        - "rand" : Use random configuration of S_t batch to next batch (Some have sum, some nothing) 
     """
 
     def __init__(
@@ -29,6 +35,7 @@ class LiZACallback(TrainerCallback):
         transition_step: Union[int, tuple, list] = 100,
         weight_list: Optional[list] = None,
         switch_period: int = 1,  # period for switching
+        cache_noise: Optional[str] = None, # TODO : None, 'simple', 'sum', 'rand'
     ):
         self.model = model
         self.mode = mode
@@ -57,6 +64,9 @@ class LiZACallback(TrainerCallback):
 
         # For switch_alternate mode
         self.switch_period = int(switch_period)
+
+        # State effect for memory # TODO
+        self.cache_noise = cache_noise
 
     def on_step_end(self, args, state, control, **kwargs):
         current_step = state.global_step
@@ -145,3 +155,14 @@ class SaveBestModelCallback(TrainerCallback):
                 control.should_save = True  # Trigger save
             else:
                 control.should_save = False  # Skip save
+
+
+"""
+** Objective:
+    Move beyond stateless training where each batch is treated as an isolated entity.
+    By managing 'cache_noise' configurations, this callback facilitates the 
+    injection and accumulation of recurrent states (S_t) across batch boundaries. 
+    This allows the model to learn a persistent, stateful memory representation, 
+    effectively mimicking a streaming architecture where the model retains 
+    contextual information from previous training steps.
+"""
