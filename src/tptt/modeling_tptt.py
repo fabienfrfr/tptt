@@ -329,7 +329,7 @@ class LinearAttention(nn.Module):
                 "order": 2,
                 "alpha_gate": "c",
                 "beta_gate": "k",
-                "linear": True,
+                "linear": True, # Add VAE for constrained, reusable (model agnostic) and explainable memory
                 "trick": "dt",
             }
         self.operator_mode = operator_mode
@@ -357,6 +357,8 @@ class LinearAttention(nn.Module):
 
         # Specifics training mode (state-aware training, multistream memory, etc.)
         self.force_cache = False
+        self.cache_noise_policy = None
+        # Add S_t layer for VAE mode between chunk (need)
 
     def get_cache(self, use_cache: bool) -> Tuple[
         Optional[torch.Tensor],
@@ -371,6 +373,11 @@ class LinearAttention(nn.Module):
         if last_state is not None:
             recurrent_state = last_state.get("recurrent_state", None)
             qkvg_buffers = last_state.get("qkvg", None)
+            # TODO: LinearCallback effect
+            if self.cache_noise_policy is not None :
+                recurrent_state, qkvg_buffers = apply_state_strategy(
+                    recurrent_state, qkvg_buffers, self.cache_noise_policy, self.recurrent_config
+                    )
         else:
             recurrent_state = None
             qkvg_buffers = None
@@ -1616,6 +1623,21 @@ def apply_linear_attention_mask(
     else:  # right padding
         mask = mask[:, : v.shape[-2]][(...,) + (None,) * (v.dim() - 2)]
     return v * mask
+
+
+def apply_state_strategy(
+    recurrent_state, qkvg_buffers, cache_noise_policy, recurrent_config
+    ) -> Tuple[
+        Optional[torch.Tensor],
+        Optional[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]],
+    ]:
+    """Injects S_t across batch boundaries for persistent, stateful training. (Placeholder)"""
+
+    if cache_noise_policy is not None :
+        pass
+    if recurrent_config is not None :
+        pass
+    return recurrent_state, qkvg_buffers
 
 
 def truncate_attention_mask(
